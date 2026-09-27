@@ -98,11 +98,13 @@
   function isSymmetric(A) { return A.isSquare && equals(A, transpose(A)); }
 
   // ---------- LaTeX ----------
+  // aug: number of trailing columns after a bar, or an array of block widths (e.g. [3, 3, 3] for [U|L|P])
   function latex(A, aug = 0) {
     let body = A.a.map((row) => row.map((x) => N.toLatex(x)).join(' & ')).join(' \\\\ ');
     if (body.includes('\\frac')) body = body.replace(/\\frac/g, '\\dfrac');
-    if (aug > 0) {
-      const spec = 'c'.repeat(A.c - aug) + '|' + 'c'.repeat(aug);
+    const widths = Array.isArray(aug) ? aug : aug > 0 ? [A.c - aug, aug] : null;
+    if (widths) {
+      const spec = widths.map((w) => 'c'.repeat(w)).join('|');
       return `\\left[\\begin{array}{${spec}}${body}\\end{array}\\right]`;
     }
     return `\\begin{bmatrix}${body}\\end{bmatrix}`;
@@ -113,10 +115,16 @@
     const s = N.toLatex(f);
     return s.startsWith('-') ? `\\left(${s}\\right)` : s;
   }
-  const Rl = (i) => `R_{${i + 1}}`;
+  // Row-operation notation used in Math 218: r2 - 3r1 -> r2, r1 <-> r2, (1/2) r1 -> r1
+  const rl = (i) => `r_{${i + 1}}`;
+  const swapTex = (a, b) => `${rl(a)} \\leftrightarrow ${rl(b)}`;
+  const scaleTex = (i, f) => `${coefLatex(f)}\\,${rl(i)} \\to ${rl(i)}`;
+  const addTex = (i, j, f) => `${rl(i)} ${N.sign(f) < 0 ? '-' : '+'} ${coefLatex(N.abs(f))}${rl(j)} \\to ${rl(i)}`;
 
   // ---------- Elimination ----------
-  // Gaussian (reduced=false) or Gauss–Jordan (reduced=true) elimination.
+  // Gaussian (reduced=false) or Gauss–Jordan (reduced=true) elimination, following the class algorithm:
+  // if the pivot position holds 0, swap with the first row below that has a nonzero entry; otherwise
+  // (Gauss–Jordan) scale the pivot to 1, then clear the rest of the column in one step.
   // augment: number of trailing columns that are never used as pivots.
   function eliminate(M, { reduced = true, augment = 0, steps = null, tol = null, opLog = null } = {}) {
     const A = M.a.map((r) => r.slice());
@@ -131,11 +139,7 @@
     for (let col = 0; col < nc && row < m; col++) {
       let p = -1;
       if (exact) {
-        for (let i = row; i < m; i++) {
-          if (z(A[i][col])) continue;
-          if (p < 0) p = i;
-          if (N.isOne(N.abs(A[i][col]))) { p = i; break; }
-        }
+        for (let i = row; i < m; i++) if (!z(A[i][col])) { p = i; break; }
       } else {
         let best = tol || 1e-10;
         for (let i = row; i < m; i++) {
@@ -144,12 +148,11 @@
         }
       }
       if (p < 0) { for (let i = row; i < m; i++) A[i][col] = R.ZERO; continue; }
-      let ops = [];
       if (p !== row) {
         [A[p], A[row]] = [A[row], A[p]];
         swaps++;
         if (opLog) opLog.push({ type: 'swap', i: row, j: p });
-        ops.push(`${Rl(row)} \\leftrightarrow ${Rl(p)}`);
+        if (steps) steps.push({ ops: [swapTex(row, p)], mat: snap(), aug: augment });
       }
       const piv = A[row][col];
       if (reduced && !N.isOne(piv)) {
@@ -158,10 +161,9 @@
         A[row][col] = R.ONE;
         scaleProd = N.mul(scaleProd, piv);
         if (opLog) opLog.push({ type: 'scale', i: row, f });
-        ops.push(`${Rl(row)} \\leftarrow ${coefLatex(f)}${Rl(row)}`);
+        if (steps) steps.push({ ops: [scaleTex(row, f)], mat: snap(), aug: augment });
       }
-      if (steps && ops.length) steps.push({ ops, mat: snap(), aug: augment });
-      ops = [];
+      const ops = [], items = [];
       const pv = A[row][col];
       for (let r = reduced ? 0 : row + 1; r < m; r++) {
         if (r === row || z(A[r][col])) { if (r !== row) A[r][col] = R.ZERO; continue; }
@@ -171,10 +173,10 @@
           return !N.isExact(v) && Math.abs(v) < 1e-11 ? R.ZERO : v;
         });
         A[r][col] = R.ZERO;
-        const neg = N.sign(f) < 0;
-        if (opLog) opLog.push({ type: 'add', i: r, j: row, f: N.neg(f) });
-        ops.push(`${Rl(r)} \\leftarrow ${Rl(r)} ${neg ? '+' : '-'} ${coefLatex(N.abs(f))}${Rl(row)}`);
+        items.push({ i: r, f: N.neg(f) });
+        ops.push(addTex(r, row, N.neg(f)));
       }
+      if (opLog && items.length) opLog.push({ type: 'adds', j: row, items });
       if (steps && ops.length) steps.push({ ops, mat: snap(), aug: augment });
       pivots.push(col);
       row++;
@@ -182,12 +184,13 @@
     return { R: new Matrix(A), pivots, swaps, scaleProd };
   }
 
-  // Elementary matrix for a logged row operation on an m-row matrix
+  // Elementary matrix for a logged row operation on an m-row matrix.
+  // 'adds' clears a whole column at once (a product of commuting row-addition matrices), as in class.
   function elementary(op, m) {
     const E = identity(m).a.map((r) => r.slice());
     if (op.type === 'swap') { [E[op.i], E[op.j]] = [E[op.j], E[op.i]]; }
     else if (op.type === 'scale') E[op.i][op.i] = op.f;
-    else E[op.i][op.j] = op.f; // R_i ← R_i + f R_j
+    else for (const { i, f } of op.items) E[i][op.j] = f;
     return new Matrix(E);
   }
   // EA = R: returns the elementary matrices (in order applied), E = E_k⋯E_1, and R
@@ -200,10 +203,10 @@
     return { Es, E, R: Rm };
   }
   function opLatex(op) {
-    if (op.type === 'swap') return `${Rl(op.i)} \\leftrightarrow ${Rl(op.j)}`;
-    if (op.type === 'scale') return `${Rl(op.i)} \\leftarrow ${coefLatex(op.f)}${Rl(op.i)}`;
-    const neg = N.sign(op.f) < 0;
-    return `${Rl(op.i)} \\leftarrow ${Rl(op.i)} ${neg ? '-' : '+'} ${coefLatex(N.abs(op.f))}${Rl(op.j)}`;
+    if (op.type === 'swap') return swapTex(op.i, op.j);
+    if (op.type === 'scale') return scaleTex(op.i, op.f);
+    const lines = op.items.map(({ i, f }) => addTex(i, op.j, f));
+    return lines.length > 1 ? `\\begin{gathered}${lines.join('\\\\')}\\end{gathered}` : lines[0];
   }
 
   function rref(M, steps) { return eliminate(M, { reduced: true, steps }).R; }
@@ -473,34 +476,49 @@
     return res;
   }
 
-  // PA = LU with row pivoting only when needed.
-  function lu(A) {
+  // PA = LU, following the class algorithm: swap only when the pivot is 0 (first nonzero row below);
+  // multipliers are recorded in L (swaps also permute L). Steps show [U | L | P] like the course calc.
+  function lu(A, steps) {
     const m = A.r, n = A.c;
     const U = A.a.map((r) => r.slice());
-    const L = identity(m).a.map((r) => r.slice());
-    const perm = Array.from({ length: m }, (_, i) => i);
+    const L = zeros(m, m).a.map((r) => r.slice());
+    const P = identity(m).a.map((r) => r.slice());
     const exact = isExactM(A);
     let swapped = false;
-    for (let k = 0; k < Math.min(m, n); k++) {
+    const snap = (withI) => {
+      const Lm = new Matrix(L.map((r, i) => r.map((x, j) => (withI && i === j ? R.ONE : x))));
+      return hcat([new Matrix(U.map((r) => r.slice())), Lm, new Matrix(P.map((r) => r.slice()))]);
+    };
+    const bars = [n, m, m];
+    if (steps) steps.push({ ops: ['\\text{start: } [A \\mid 0 \\mid I]'], mat: snap(false), aug: bars });
+    let i = 0;
+    for (let j = 0; i < m && j < n; j++) {
       let p = -1;
-      if (exact) { for (let i = k; i < m; i++) if (!N.isZero(U[i][k])) { p = i; break; } }
-      else { let best = 1e-12; for (let i = k; i < m; i++) { const v = Math.abs(N.toF(U[i][k])); if (v > best) { best = v; p = i; } } }
+      if (exact) { for (let r = i; r < m; r++) if (!N.isZero(U[r][j])) { p = r; break; } }
+      else { let best = 1e-12; for (let r = i; r < m; r++) { const v = Math.abs(N.toF(U[r][j])); if (v > best) { best = v; p = r; } } }
       if (p < 0) continue;
-      if (p !== k) {
+      if (p !== i) {
         swapped = true;
-        [U[p], U[k]] = [U[k], U[p]];
-        [perm[p], perm[k]] = [perm[k], perm[p]];
-        for (let j = 0; j < k; j++) [L[p][j], L[k][j]] = [L[k][j], L[p][j]];
+        [U[p], U[i]] = [U[i], U[p]];
+        [L[p], L[i]] = [L[i], L[p]];
+        [P[p], P[i]] = [P[i], P[p]];
+        if (steps) steps.push({ ops: [swapTex(i, p)], mat: snap(false), aug: bars });
       }
-      for (let i = k + 1; i < m; i++) {
-        const f = N.div(U[i][k], U[k][k]);
-        L[i][k] = f;
-        U[i] = U[i].map((x, j) => N.sub(x, N.mul(f, U[k][j])));
-        U[i][k] = R.ZERO;
+      const ops = [];
+      for (let r = i + 1; r < m; r++) {
+        if (N.isZero(U[r][j])) continue;
+        const f = N.div(U[r][j], U[i][j]);
+        L[r][i] = f;
+        U[r] = U[r].map((x, c) => N.sub(x, N.mul(f, U[i][c])));
+        U[r][j] = R.ZERO;
+        ops.push(addTex(r, i, N.neg(f)));
       }
+      if (steps && ops.length) steps.push({ ops, mat: snap(false), aug: bars });
+      i++;
     }
-    const P = new Matrix(perm.map((pi) => Array.from({ length: m }, (_, j) => (j === pi ? R.ONE : R.ZERO))));
-    return { P, L: new Matrix(L), U: new Matrix(U), swapped };
+    if (steps) steps.push({ ops: ['\\text{finally } L \\leftarrow L + I'], mat: snap(true), aug: bars });
+    const Lf = new Matrix(L.map((r, a) => r.map((x, b) => (a === b ? R.ONE : x))));
+    return { P: new Matrix(P), L: Lf, U: new Matrix(U), swapped };
   }
 
   function dotCols(u, v) {

@@ -177,9 +177,9 @@
   }
 
   const UNARY = [
-    ['Aᵀ', '{A}^T'], ['A⁻¹', 'inv({A})'], ['det', 'det({A})'], ['rref', 'rref({A})'], ['EA = R', 'elim({A})'], ['rank', 'rank({A})'], ['trace', 'tr({A})'],
+    ['adjectives', 'about({A})'], ['Aᵀ', '{A}^T'], ['A⁻¹', 'inv({A})'], ['det', 'det({A})'], ['rref', 'rref({A})'], ['EA = R', 'elim({A})'], ['rank', 'rank({A})'], ['trace', 'tr({A})'],
     ['A²', '{A}^2'], ['AᵀA', 'gram({A})'], ['eigen', 'eig({A})'], ['char poly', 'charpoly({A})'], ['null space', 'null({A})'],
-    ['col space', 'col({A})'], ['LU', 'lu({A})'], ['QR', 'qr({A})'], ['Gram–Schmidt', 'gs({A})'], ['‖A‖', 'norm({A})'],
+    ['col space', 'col({A})'], ['PA = LU', 'lu({A})'], ['QR', 'qr({A})'], ['Gram–Schmidt', 'gs({A})'], ['‖A‖', 'norm({A})'],
   ];
   const BINARY = [
     ['A·B', '{A} * {B}'], ['B·A', '{B} * {A}'], ['A+B', '{A} + {B}'], ['A−B', '{A} - {B}'], ['⟨A, B⟩', '<{A}, {B}>'],
@@ -251,7 +251,7 @@
 
   const CHIPS = [
     ['inv', 'inv(|)'], ['det', 'det(|)'], ['ᵀ', '|^T'], ['⁻¹', '|^-1'], ['⟨ , ⟩', '<|, >'], ['rref', 'rref(|)'], ['EA=R', 'elim(|)'], ['rank', 'rank(|)'],
-    ['tr', 'tr(|)'], ['eig', 'eig(|)'], ['solve', 'solve(|, )'], ['null', 'null(|)'], ['col', 'col(|)'], ['gram', 'gram(|)'],
+    ['tr', 'tr(|)'], ['eig', 'eig(|)'], ['iseig', 'iseig(|, )'], ['about', 'about(|)'], ['solve', 'solve(|, )'], ['null', 'null(|)'], ['col', 'col(|)'], ['gram', 'gram(|)'],
     ['norm', 'norm(|)'], ['proj', 'proj(|, )'], ['cross', 'cross(|, )'], ['lu', 'lu(|)'], ['qr', 'qr(|)'], ['I(n)', 'I(|)'],
   ];
   for (const [label, tpl] of CHIPS) $('chips').append(el('button', { type: 'button', class: 'chip', onclick: () => insertTemplate(tpl) }, label));
@@ -366,6 +366,7 @@
         const d = el('div', { class: 'info-block' });
         if (blk.label) d.append(el('span', { class: 'lbl' }, blk.label + ' ='));
         if (blk.tex) d.append(texEl(blk.label ? `${blk.label} = ${blk.tex}` : blk.tex, true));
+        if (blk.svg) { const g = el('div'); g.innerHTML = blk.svg; d.append(g); }
         if (blk.text) d.append(el('div', { class: 'info-text' }, blk.text));
         if (blk.label && blk.tex) d.querySelector('.lbl').remove();
         body.append(d);
@@ -397,7 +398,7 @@
       for (const g of res.steps) {
         const grp = el('div', { class: 'step-group' }, el('h4', {}, g.title));
         for (const it of g.items) {
-          if (it.text) { grp.append(el('div', { class: 'step text' }, texEl(it.text, false))); continue; }
+          if (it.text) { grp.append(el('div', { class: 'step text' }, texEl(it.text, /matrix|array/.test(it.text)))); continue; }
           const ops = it.ops.length > 1 ? `\\begin{gathered}${it.ops.join('\\\\')}\\end{gathered}` : it.ops[0];
           grp.append(el('div', { class: 'step' }, el('div', { class: 'ops' }, texEl(ops, false)), el('div', { class: 'mat' }, texEl(M.latex(it.mat, it.aug), false))));
         }
@@ -408,11 +409,12 @@
   }
   function removeCard(rec) {
     rec.el.remove();
+    if (!cards.includes(rec)) return;
     cards.splice(cards.indexOf(rec), 1);
     if (!cards.length) $('historyEmpty').hidden = false;
   }
   function saveButton(v, label, preset) {
-    const btn = el('button', { type: 'button', class: label.startsWith('Save ') && label !== 'Save as…' ? 'mini-btn' : '' }, label);
+    const btn = el('button', { type: 'button', class: 'mini-btn' }, label);
     btn.addEventListener('click', () => {
       const inp = el('input', { value: preset && !(preset in ws) ? preset : suggestName(v), 'aria-label': 'Variable name', spellcheck: 'false' });
       const form = el('span', { class: 'saveform' }, inp, el('button', { type: 'button', class: 'mini-btn', onclick: () => commit() }, 'Save'));
@@ -453,6 +455,9 @@
   }
   function rerenderAll() {
     for (const rec of cards) renderCard(rec);
+    for (const rec of practiceCards) renderCard(rec);
+    if (lastProblem) renderProblem();
+    renderDigraph();
     renderWs();
     if (lastExplain) renderExplain(lastExplain);
   }
@@ -572,14 +577,116 @@
       el('code', {}, item.eq), el('small', {}, item.note))));
   }
 
+  // ---------- digraphs ----------
+  const dgIns = ['dgEdges', 'dgVerts', 'dgW'].map($);
+  let dgTimer;
+  function renderDigraph() {
+    const draw = $('dgDraw'), mats = $('dgMats'), err = $('dgErr');
+    err.textContent = '';
+    let g;
+    try {
+      g = LA.digraph.parse($('dgEdges').value, $('dgVerts').value, $('dgSort').checked);
+      if (!g.edges.length) { draw.innerHTML = ''; mats.innerHTML = ''; return; }
+    } catch (e) { err.textContent = e.message; return; }
+    const wTxt = $('dgW').value.trim();
+    let w = null;
+    if (wTxt) {
+      try {
+        w = wTxt.split(/[,\s]+/).filter(Boolean).map((t) => E.evalScalar(t, ws, settings));
+        if (w.length !== g.edges.length) { err.textContent = `There are ${g.edges.length} edges but ${w.length} weights — they must match to compute Aw.`; w = null; }
+      } catch (e) { err.textContent = `Weights: ${e.message}`; w = null; }
+    }
+    draw.innerHTML = LA.digraph.svg(g, w && w.map((x) => N.toText(x)));
+    const Ainc = LA.digraph.incidence(g), Adj = LA.digraph.adjacency(g);
+    mats.innerHTML = '';
+    const edgeList = g.edges.map(([u, v], k) => `e_{${k + 1}} = ${u.replace(/(\d+)$/, '_{$1}')} \\to ${v.replace(/(\d+)$/, '_{$1}')}`).join(',\\ ');
+    mats.append(texEl(`\\text{edges: } ${edgeList}`, false), el('br'));
+    mats.append(el('div', { class: 'info-title', style: 'margin-top:10px' }, 'Incidence matrix'));
+    mats.append(texEl(`A = ${M.latex(Ainc)}`, true));
+    mats.append(el('div', { class: 'row' }, saveButton(Ainc, 'Save as…', 'A'), el('button', { type: 'button', class: 'mini-btn', onclick: () => editInGrid('A', Ainc) }, 'Open in editor')));
+    if (w) {
+      const wv = new LA.Matrix(w.map((x) => [x]));
+      const Aw = M.mul(Ainc, wv);
+      mats.append(el('div', { class: 'info-title', style: 'margin-top:14px' }, 'Net flow'));
+      mats.append(texEl(`A w = ${M.latex(Ainc)}${M.latex(wv)} = ${M.latex(Aw)}`, true));
+      mats.append(el('div', { class: 'info-text small muted' }, `Entry i is the net flow into vertex i: the weights of edges entering it minus those leaving it. ${Aw.a.every((r) => N.isZero(r[0])) ? 'Every entry is 0, so flow is conserved at every vertex (w ∈ Null(A)).' : ''}`));
+      mats.append(el('div', { class: 'row' }, saveButton(wv, 'Save w…', 'w')));
+    }
+    const rk = M.rank(Ainc);
+    mats.append(el('div', { class: 'info-text small muted', style: 'margin-top:10px' },
+      `rank(A) = ${rk}; nullity(A) = ${g.edges.length - rk} (independent circulations — cycles in the underlying graph).`));
+    mats.append(el('div', { class: 'info-title', style: 'margin-top:14px' }, 'Adjacency matrix (bonus)'));
+    mats.append(texEl(`\\operatorname{Adj} = ${M.latex(Adj)}`, true));
+    mats.append(el('div', { class: 'info-text small muted' }, 'Entry (i, j) counts edges vᵢ → vⱼ; entry (i, j) of Adjᵏ counts walks of length k from vᵢ to vⱼ.'));
+  }
+  for (const i of dgIns) i.addEventListener('input', () => { clearTimeout(dgTimer); dgTimer = setTimeout(renderDigraph, 200); });
+  $('dgSort').addEventListener('change', renderDigraph);
+
+  // ---------- practice ----------
+  const practiceCards = [];
+  let lastProblem = null;
+  const HINTS = {
+    rref: 'Work column by column: get a leading 1, then clear everything above and below it. Only swap when the pivot position is 0.',
+    system: 'Row reduce the augmented matrix [A | b]. A pivot in the last column means inconsistent; free variables become parameters.',
+    product: 'Entry (i, j) of AB is row i of A dotted with column j of B. Check the inner dimensions first.',
+    inverse: 'Row reduce [A | I]. If the left block becomes I, the right block is A⁻¹.',
+    ear: 'Record each Gauss–Jordan step as an elementary matrix (swap, scale, or clear a column). E is their product in reverse order: E = Eₖ⋯E₁.',
+    palu: 'Eliminate below each pivot, storing each multiplier in L. Swap only when a pivot is 0 — and swap the rows of L and P too.',
+    nullspace: 'Find rref(A), write pivot variables in terms of free variables, and pull out one vector per free variable.',
+    eigen: 'Compute χ_A(t) = det(tI − A) and find its roots. For each root λ, row reduce λI − A to get a basis of Null(λI − A).',
+    nonsingular: 'A square matrix is nonsingular exactly when rref(A) = I (equivalently rank(A) = n, or det(A) ≠ 0).',
+  };
+  const prType = $('prType');
+  prType.append(el('option', { value: 'mix' }, 'Random mix'));
+  for (const [k, t] of Object.entries(LA.practice.TYPES)) prType.append(el('option', { value: k }, t.label));
+  function renderProblem() {
+    const p = lastProblem;
+    const box = $('prProblem');
+    box.innerHTML = '';
+    box.append(el('div', { class: 'tag' }, p.label), texEl(p.prompt, true));
+  }
+  function newProblem() {
+    lastProblem = LA.practice.generate(prType.value);
+    renderProblem();
+    $('prActions').hidden = false;
+    $('prHintOut').textContent = '';
+    $('prSolution').innerHTML = '';
+    practiceCards.length = 0;
+  }
+  $('prNew').addEventListener('click', newProblem);
+  $('prHint').addEventListener('click', () => { if (lastProblem) $('prHintOut').textContent = '💡 ' + HINTS[lastProblem.type]; });
+  $('prLoad').addEventListener('click', () => {
+    if (!lastProblem) return;
+    for (const [k, v] of Object.entries(lastProblem.vars)) setVar(k, v, true);
+    toast(`Saved ${Object.keys(lastProblem.vars).join(', ')} to the workspace`);
+  });
+  $('prSolve').addEventListener('click', () => {
+    if (!lastProblem) return;
+    const out = $('prSolution');
+    out.innerHTML = '';
+    practiceCards.length = 0;
+    for (const src of [lastProblem.solve, ...(lastProblem.extra || [])]) {
+      let rec;
+      try { rec = { input: src, res: E.run(src, lastProblem.vars, settings, { wantSteps: true }), stepsOpen: true }; }
+      catch (e) { rec = { input: src, error: e.message }; }
+      rec.el = el('div', { class: 'card' + (rec.error ? ' error' : '') });
+      renderCard(rec);
+      practiceCards.push(rec);
+      out.append(rec.el);
+    }
+  });
+
   // ---------- tabs ----------
   function showTab(name) {
     document.querySelectorAll('.tab').forEach((t) => { const on = t.dataset.tab === name; t.classList.toggle('on', on); t.setAttribute('aria-selected', on); });
-    $('tab-calc').hidden = name !== 'calc';
-    $('tab-explain').hidden = name !== 'explain';
+    for (const t of ['calc', 'explain', 'digraph', 'practice']) $(`tab-${t}`).hidden = name !== t;
     store.set('la-tab', name);
   }
-  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => { showTab(t.dataset.tab); (t.dataset.tab === 'calc' ? cmd : eqInput).focus(); }));
+  document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => {
+    showTab(t.dataset.tab);
+    if (t.dataset.tab === 'calc') cmd.focus();
+    else if (t.dataset.tab === 'explain') eqInput.focus();
+  }));
 
   // ---------- display mode / theme ----------
   function setMode(m) {
@@ -721,6 +828,7 @@
   document.querySelectorAll('.seg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === N.getMode()));
   renderWs();
   renderQuickOps();
+  renderDigraph();
   updatePreview();
   showTab(store.get('la-tab', 'calc'));
   if (/[?&]test\b/.test(location.search)) selfTest();

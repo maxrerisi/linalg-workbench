@@ -332,7 +332,16 @@
       if (a.r === 1 && a.c === 1) return M.scale(a.a[0][0], b);
       if (b.r === 1 && b.c === 1) return M.scale(b.a[0][0], a);
     }
-    return M.mul(a, b);
+    const out = M.mul(a, b);
+    if (ctx && ctx.wantSteps && b.c === 1 && a.c > 1 && a.c <= 6 && a.r > 1) {
+      // Column picture: Av = v1 a1 + v2 a2 + ... (a linear combination of the columns of A)
+      const terms = b.col(0).map((x, j) => {
+        const c = N.toLatex(x);
+        return `${N.sign(x) < 0 ? `\\left(${c}\\right)` : c}${M.latex(colVec(a.col(j)))}`;
+      });
+      ctx.steps.push({ title: 'Matrix-vector product as a linear combination of the columns', items: [{ text: `${terms.join(' + ')} = ${M.latex(out)}` }] });
+    }
+    return out;
   }
   function vInv(a, ctx, steps) {
     if (N.isNum(a)) return N.inv(a);
@@ -492,6 +501,56 @@
     }
     return new Info('Elimination as matrix multiplication: EA = R', blocks, { E, R: Rm }, E);
   }, 'elementary matrices with EA = rref(A)');
+  def('about adjectives props', 'about(A)', 1, 1, ([a], ctx) => aboutInfo(asMatrix(a, ctx)), 'matrix "adjectives": symmetric, triangular, REF/RREF, rank, nonsingular…');
+  def('augment', 'augment(A, B)', 2, 2, ([a, b], ctx) => {
+    const A = asMatrix(a, ctx), B = asMatrix(b, ctx);
+    if (A.r !== B.r) throw new MathError(`Can't augment: ${A.dims} and ${B.dims} have different numbers of rows.`);
+    const AB = M.hcat([A, B]);
+    return new Info('Augmented matrix', [{ tex: M.latex(AB, B.c) }], {}, AB);
+  }, '[A | B]');
+  def('innull', 'innull(A, v)', 2, 2, ([a, b], ctx) => {
+    const A = asMatrix(a, ctx), v = colVec(asVec(b, ctx));
+    const Av = M.mul(A, v);
+    const yes = Av.a.every((r) => N.isZero(r[0]));
+    return new Info('Is v in Null(A)?', [
+      { tex: `A v = ${M.latex(A)}${M.latex(v)} = ${M.latex(Av)}` },
+      { text: yes ? '✓ Yes — Av = 0, so v ∈ Null(A).' : '✗ No — Av ≠ 0, so v ∉ Null(A).' },
+    ]);
+  }, 'check whether Av = 0');
+  def('iseig', 'iseig(A, λ)', 2, 2, ([a, l], ctx) => {
+    const A = asMatrix(a, ctx), lam = asScalar(l, 'a number λ');
+    if (!A.isSquare) throw new MathError('Eigenvalues need a square matrix.');
+    const B = M.sub(M.scale(lam, M.identity(A.r)), A);
+    const R2 = M.rref(B), rk = M.rank(B), gm = A.r - rk;
+    const L = N.toLatex(lam);
+    return new Info(`Is λ = ${N.toText(lam)} an eigenvalue?`, [
+      { tex: `${L}I - A = ${M.latex(B)},\\qquad \\operatorname{rref}(${L}I - A) = ${M.latex(R2)}` },
+      { text: gm > 0
+        ? `✓ Yes — ${N.toText(lam)}I − A is singular (rank ${rk} < ${A.r}), so λ = ${N.toText(lam)} is an eigenvalue.`
+        : `✗ No — ${N.toText(lam)}I − A is nonsingular (rref is I), so λ = ${N.toText(lam)} is not an eigenvalue.` },
+      ...(gm > 0 ? [{ tex: `\\operatorname{gm}_A(${L}) = \\operatorname{nullity}(${L}I - A) = ${gm}` },
+        { tex: `\\mathcal{E}_A(${L}) = \\operatorname{Null}(${L}I - A) = \\operatorname{span}\\left\\{${M.nullspace(B).map((v) => M.latex(colVec(v))).join(',\\ ')}\\right\\}` }] : []),
+    ]);
+  }, 'is λ an eigenvalue? (rref of λI − A, gm)');
+  def('iseigvec', 'iseigvec(A, v, λ)', 3, 3, ([a, b, l], ctx) => {
+    const A = asMatrix(a, ctx), v = colVec(asVec(b, ctx)), lam = asScalar(l, 'a number λ');
+    const Av = M.mul(A, v), lv = M.scale(lam, v);
+    const yes = M.equals(Av, lv) && !v.a.every((r) => N.isZero(r[0]));
+    const blocks = [
+      { tex: `A v = ${M.latex(Av)},\\qquad ${N.toLatex(lam)}\\,v = ${M.latex(lv)}` },
+      { text: v.a.every((r) => N.isZero(r[0])) ? '✗ The zero vector is never an eigenvector.' : yes ? `✓ Yes — Av = ${N.toText(lam)}v, so v is an eigenvector for λ = ${N.toText(lam)}.` : `✗ No — Av ≠ ${N.toText(lam)}v.` },
+    ];
+    if (A.r === 2) blocks.push({ svg: plotSvg([{ v: v.col(0), label: 'v' }, { v: Av.col(0), label: 'Av' }]), text: 'v is an eigenvector exactly when Av is parallel to v.' });
+    return new Info('Is v an eigenvector?', blocks);
+  }, 'check whether Av = λv');
+  def('plot', 'plot(u, v, …)', 1, 8, (args, ctx, node) => {
+    const vs = args.map((x, i) => {
+      const v = asVec(x, ctx);
+      if (v.length !== 2) throw new MathError('plot draws vectors in ℝ² — each argument must have 2 entries.');
+      return { v, label: node && node.args[i] ? exprText(node.args[i]) : `v${i + 1}` };
+    });
+    return new Info('Vectors in ℝ²', [{ svg: plotSvg(vs) }]);
+  }, 'draw 2D vectors');
   def('transpose', 'transpose(A)', 1, 1, ([a], ctx) => vT(a, ctx), 'transpose');
   def('gram', 'gram(A)', 1, 1, ([a], ctx) => { const A = asMatrix(a, ctx); ctx.notes.push('Gram matrix G = AᵀA: entry (i, j) is ⟨aᵢ, aⱼ⟩ for columns aᵢ of A.'); return M.mul(M.transpose(A), A); }, 'Gram matrix AᵀA');
   def('norm', 'norm(v)', 1, 1, ([a], ctx) => {
@@ -577,16 +636,16 @@
   }, 'least-squares solution');
   def('char charpoly', 'charpoly(A)', 1, 1, ([a], ctx) => {
     const c = M.charpoly(asMatrix(a, ctx));
-    return new Info('Characteristic polynomial', [{ tex: `p(\\lambda) = \\det(\\lambda I - A) = ${M.polyLatex(c)}` }]);
+    return new Info('Characteristic polynomial', [{ tex: `\\chi_A(t) = \\det(tI - A) = ${M.polyLatex(c, 't')}` }]);
   }, 'characteristic polynomial');
   def('eig eigen', 'eig(A)', 1, 1, ([a], ctx) => eigenInfo(asMatrix(a, ctx)), 'eigenvalues, eigenvectors, diagonalization');
-  def('lu', 'lu(A)', 1, 1, ([a], ctx) => {
+  def('lu palu', 'lu(A)', 1, 1, ([a], ctx, node) => {
     const A = asMatrix(a, ctx);
-    const { P, L, U, swapped } = M.lu(A);
-    const blocks = [{ tex: swapped ? 'PA = LU' : 'A = LU' }];
-    if (swapped) blocks.push({ label: 'P', tex: M.latex(P) });
-    blocks.push({ label: 'L', tex: M.latex(L) }, { label: 'U', tex: M.latex(U) });
-    const parts = swapped ? { P, L, U } : { L, U };
+    const { P, L, U, swapped } = M.lu(A, stepsFor(ctx, `PA = LU for ${labelOf(node)} — each step shows [U | L | P]`));
+    const blocks = [{ tex: 'PA = LU' }];
+    if (!swapped) blocks.push({ text: 'No row swaps were needed, so P = I and A = LU.' });
+    blocks.push({ label: 'P', tex: M.latex(P) }, { label: 'L', tex: M.latex(L) }, { label: 'U', tex: M.latex(U) });
+    const parts = { P, L, U };
     return new Info('LU factorization', blocks, parts);
   }, 'LU factorization');
   def('qr', 'qr(A)', 1, 1, ([a], ctx) => {
@@ -626,6 +685,91 @@
     return new Info('Size', [{ tex: `${A.r} \\times ${A.c}` }]);
   }, 'dimensions');
 
+  function aboutInfo(A) {
+    const z = N.isZero, one = N.isOne;
+    const all = (f) => A.a.every((row, i) => row.every((x, j) => f(x, i, j)));
+    const yes = (b) => (b ? '✓' : '✗');
+    const { pivots } = M.eliminate(A, { reduced: false });
+    const rank = pivots.length;
+    // REF / RREF checks
+    let isRef = true, isRref = true, lastLead = -1, seenZero = false;
+    const leads = [];
+    A.a.forEach((row) => {
+      const lead = row.findIndex((x) => !z(x));
+      if (lead < 0) { seenZero = true; return; }
+      if (seenZero || lead <= lastLead) isRef = false;
+      lastLead = lead;
+      leads.push(lead);
+    });
+    if (!isRef) isRref = false;
+    else leads.forEach((c, i) => {
+      if (!one(A.a[i][c])) isRref = false;
+      A.a.forEach((row, r) => { if (r !== i && !z(row[c])) isRref = false; });
+    });
+    const sq = A.isSquare;
+    const lines = [
+      `Size: ${A.r} × ${A.c}${sq ? ' (square)' : ''}${A.c === 1 ? ' — a column vector' : A.r === 1 ? ' — a row vector' : ''}`,
+      `${yes(all(z))} zero matrix`,
+    ];
+    if (sq) {
+      lines.push(
+        `${yes(all((x, i, j) => (i === j ? one(x) : z(x))))} identity`,
+        `${yes(all((x, i, j) => i === j || z(x)))} diagonal`,
+        `${yes(all((x, i, j) => i <= j || z(x)))} upper triangular`,
+        `${yes(all((x, i, j) => i >= j || z(x)))} lower triangular`,
+        `${yes(M.isSymmetric(A))} symmetric (Aᵀ = A)`,
+        `${yes(all((x, i, j) => N.eq(x, N.neg(A.a[j][i]))))} skew-symmetric (Aᵀ = −A)`,
+      );
+    }
+    lines.push(
+      `${yes(isRef)} in row echelon form`,
+      `${yes(isRref)} in reduced row echelon form`,
+      `rank(A) = ${rank}, nullity(A) = ${A.c - rank}${rank === 1 ? ' — rank one' : ''}`,
+      pivots.length ? `pivot columns: ${pivots.map((p) => p + 1).join(', ')} (first pivot column: ${pivots[0] + 1})` : 'no pivot columns (A is zero)',
+    );
+    const blocks = [{ text: lines.join('\n') }];
+    const diag = A.a.slice(0, Math.min(A.r, A.c)).map((r, i) => r[i]);
+    blocks.push({ tex: `\\operatorname{diag}(A) = (${diag.map((x) => N.toLatex(x)).join(',\\ ')})` });
+    if (sq) {
+      const d = M.det(A);
+      const ns = rank === A.r;
+      blocks.push({ tex: `\\operatorname{tr}(A) = ${N.toLatex(M.trace(A))},\\qquad \\det(A) = ${N.toLatex(d)}` });
+      blocks.push({ text: ns
+        ? '✓ Nonsingular. Equivalently: rref(A) = I · rank(A) = n · Null(A) = {0} · Ax = b has exactly one solution for every b · det(A) ≠ 0 · 0 is not an eigenvalue · A⁻¹ exists.'
+        : '✗ Singular. Equivalently: rref(A) ≠ I · rank(A) < n · Null(A) contains nonzero vectors · Ax = 0 has infinitely many solutions · det(A) = 0 · 0 is an eigenvalue · no inverse.' });
+    }
+    return new Info('Adjectives', blocks);
+  }
+
+  // Simple SVG drawing of 2D vectors from the origin
+  function plotSvg(vs) {
+    const pts = vs.map(({ v }) => v.map(N.toF));
+    const mx = Math.max(1, ...pts.flat().map(Math.abs));
+    const lim = Math.ceil(mx * 1.15);
+    const S = 240, pad = 14, sc = (S / 2 - pad) / lim;
+    const X = (x) => S / 2 + x * sc, Y = (y) => S / 2 - y * sc;
+    const colors = ['var(--accent)', 'var(--bad)', 'var(--good)', '#a855f7', '#d97706', '#0891b2', '#db2777', '#65a30d'];
+    const step = lim <= 10 ? 1 : Math.ceil(lim / 10);
+    let g = '';
+    for (let k = -lim; k <= lim; k += step) {
+      g += `<line x1="${X(k)}" y1="${Y(-lim)}" x2="${X(k)}" y2="${Y(lim)}" stroke="var(--line)" stroke-width="${k === 0 ? 1.5 : 0.6}"/>`;
+      g += `<line x1="${X(-lim)}" y1="${Y(k)}" x2="${X(lim)}" y2="${Y(k)}" stroke="var(--line)" stroke-width="${k === 0 ? 1.5 : 0.6}"/>`;
+    }
+    const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    let arrows = '', defs = '';
+    // draw longer vectors first so parallel shorter ones stay visible on top
+    const order = pts.map((p, i) => i).sort((a, b) => Math.hypot(...pts[b]) - Math.hypot(...pts[a]));
+    order.forEach((i) => {
+      const [x, y] = pts[i];
+      const c = colors[i % colors.length];
+      defs += `<marker id="ah${i}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${c}"/></marker>`;
+      arrows += `<line x1="${X(0)}" y1="${Y(0)}" x2="${X(x)}" y2="${Y(y)}" stroke="${c}" stroke-width="2.4" marker-end="url(#ah${i})"/>`;
+      const off = 10 / Math.max(1e-9, Math.hypot(x, y));
+      arrows += `<text x="${X(x) + x * off * 1.2}" y="${Y(y) - y * off * 1.2 + 4}" fill="${c}" font-size="12" font-family="var(--mono)" text-anchor="middle">${esc(vs[i].label)}</text>`;
+    });
+    return `<svg class="vplot" viewBox="0 0 ${S} ${S}" width="${S}" height="${S}" role="img" aria-label="Vector plot"><defs>${defs}</defs>${g}<text x="${S - 4}" y="${Y(0) - 4}" font-size="10" fill="var(--muted)" text-anchor="end">${lim}</text>${arrows}</svg>`;
+  }
+
   function solutionInfo(res, A, B, lsq = false) {
     const title = lsq ? 'Least-squares solution' : 'Solution of Ax = b';
     if (res.kind === 'none') {
@@ -652,14 +796,14 @@
   function eigenInfo(A) {
     const n = A.r;
     const e = M.eigen(A);
-    const blocks = [{ tex: `p(\\lambda) = \\det(\\lambda I - A) = ${M.polyLatex(e.charpoly)}` }];
+    const blocks = [{ tex: `\\chi_A(t) = \\det(tI - A) = ${M.polyLatex(e.charpoly, 't')}` }];
     const allRational = e.other.length === 0;
     if (allRational) {
       const factors = e.exact.map(({ v, mult }) => {
-        const s = N.isZero(v) ? '\\lambda' : `(\\lambda ${N.sign(v) < 0 ? '+' : '-'} ${N.toLatex(N.abs(v))})`;
+        const s = N.isZero(v) ? 't' : `(t ${N.sign(v) < 0 ? '+' : '-'} ${N.toLatex(N.abs(v))})`;
         return mult > 1 ? `${s}^{${mult}}` : s;
       });
-      if (e.exact.length) blocks.push({ tex: `\\phantom{p(\\lambda)} = ${factors.join('')}` });
+      if (e.exact.length) blocks.push({ tex: `\\phantom{\\chi_A(t)} = ${factors.join('')}` });
     }
     let geoTotal = 0;
     const parts = {};
@@ -668,7 +812,7 @@
       geoTotal += basis.length;
       const vecs = basis.map((b) => M.latex(M.fromCols([b]))).join(',\\ ');
       blocks.push({
-        tex: `\\lambda = ${N.toLatex(v)}:\\quad \\text{alg. mult } ${mult},\\ \\text{geo. mult } ${basis.length},\\quad E_{${N.toLatex(v)}} = \\operatorname{span}\\left\\{${vecs}\\right\\}`,
+        tex: `\\lambda = ${N.toLatex(v)}:\\quad \\operatorname{am}_A(${N.toLatex(v)}) = ${mult},\\ \\operatorname{gm}_A(${N.toLatex(v)}) = ${basis.length},\\quad \\mathcal{E}_A(${N.toLatex(v)}) = \\operatorname{Null}(${N.toLatex(v)}I - A) = \\operatorname{span}\\left\\{${vecs}\\right\\}`,
       });
       basis.forEach((b) => { Pcols.push(b); Dvals.push(v); });
     }

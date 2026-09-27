@@ -49,6 +49,8 @@
       <nav class="tabs" role="tablist">
         <button type="button" role="tab" class="tab on" data-tab="calc" aria-selected="true">Calculator</button>
         <button type="button" role="tab" class="tab" data-tab="explain" aria-selected="false">Explain an identity</button>
+        <button type="button" role="tab" class="tab" data-tab="digraph" aria-selected="false">Digraphs</button>
+        <button type="button" role="tab" class="tab" data-tab="practice" aria-selected="false">Practice</button>
       </nav>
 
       <section id="tab-calc" class="tabpanel">
@@ -104,6 +106,46 @@
           <ul id="library"></ul>
         </div>
       </section>
+      <section id="tab-digraph" class="tabpanel" hidden>
+        <div class="panel">
+          <div class="panel-title">
+            <h3>Digraph → incidence matrix</h3>
+            <span class="hint">Rows are vertices, columns are edges: −1 where an edge leaves, +1 where it enters (same as Sage's <code>incidence_matrix()</code>).</span>
+          </div>
+          <div class="dg-form">
+            <label>Edges <input id="dgEdges" class="dg-in mono" spellcheck="false" value="v1->v2, v1->v2, v2->v3, v3->v2, v1->v3" /></label>
+            <label>Vertices <span class="muted small">(optional order)</span> <input id="dgVerts" class="dg-in mono" spellcheck="false" placeholder="v1, v2, v3" /></label>
+            <label>Edge weights w <span class="muted small">(optional, for net flow Aw)</span> <input id="dgW" class="dg-in mono" spellcheck="false" value="331, -470, -674, 101, 17" /></label>
+            <label class="check"><input type="checkbox" id="dgSort" checked /> Number edges like Sage (sorted by tail, then head)</label>
+          </div>
+          <div id="dgErr" class="grid-err"></div>
+          <div class="dg-out">
+            <div id="dgDraw" class="dg-draw"></div>
+            <div id="dgMats" class="dg-mats"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-practice" class="tabpanel" hidden>
+        <div class="panel">
+          <div class="panel-title">
+            <h3>Practice problems</h3>
+            <span class="hint">Built backwards from clean answers — work it by hand, then check the step-by-step solution.</span>
+          </div>
+          <div class="pr-controls">
+            <select id="prType" class="mini-select" aria-label="Problem type"></select>
+            <button type="button" class="primary" id="prNew">New problem</button>
+          </div>
+          <div id="prProblem" class="pr-problem"></div>
+          <div class="pr-actions" id="prActions" hidden>
+            <button type="button" class="mini-btn" id="prSolve">Show solution</button>
+            <button type="button" class="mini-btn" id="prLoad">Load into workspace</button>
+            <button type="button" class="mini-btn" id="prHint">Hint</button>
+          </div>
+          <div id="prHintOut" class="small muted"></div>
+          <div id="prSolution" class="history" style="margin-top:12px"></div>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -134,6 +176,8 @@
   <script src="js/matrix.js"></script>
   <script src="js/expr.js"></script>
   <script src="js/identities.js"></script>
+  <script src="js/digraph.js"></script>
+  <script src="js/practice.js"></script>
   <script src="js/grid.js"></script>
   <script src="js/app.js"></script>
 </body>
