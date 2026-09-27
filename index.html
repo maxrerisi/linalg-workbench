@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LinAlg Workbench</title>
+  <meta name="description" content="Matrix calculator and identity explainer for linear algebra students — exact fractions, step-by-step row reduction, saved variables." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232f5bd3'/><path d='M10 7H7v18h3M22 7h3v18h-3' stroke='white' stroke-width='2.4' fill='none'/><circle cx='13' cy='12' r='1.8' fill='white'/><circle cx='19' cy='20' r='1.8' fill='white'/></svg>" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">[ <i>A</i> ]</span>
+      <span class="brand-name">LinAlg Workbench</span>
+    </div>
+    <div class="top-actions">
+      <div class="seg" role="group" aria-label="Number display">
+        <button type="button" data-mode="frac" class="on" title="Exact fractions">a/b</button>
+        <button type="button" data-mode="dec" title="Decimals">0.5</button>
+      </div>
+      <button type="button" class="icon-btn" id="settingsBtn" title="Settings" aria-label="Settings">⚙</button>
+      <button type="button" class="icon-btn" id="helpBtn" title="Syntax help (?)" aria-label="Help">?</button>
+      <button type="button" class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">◐</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="workspace" aria-label="Workspace">
+      <div class="ws-head">
+        <h2>Workspace</h2>
+        <span class="ws-count" id="wsCount"></span>
+      </div>
+      <p class="ws-sub">Saved for this browser session. Click a name to insert it.</p>
+      <ul id="wsList" class="ws-list"></ul>
+      <div class="ws-foot">
+        <button type="button" class="link-btn" id="exportBtn">Export</button>
+        <button type="button" class="link-btn" id="importBtn">Import</button>
+        <button type="button" class="link-btn danger" id="clearWsBtn">Clear</button>
+        <input type="file" id="importFile" accept=".json,application/json" hidden />
+      </div>
+    </aside>
+
+    <main>
+      <nav class="tabs" role="tablist">
+        <button type="button" role="tab" class="tab on" data-tab="calc" aria-selected="true">Calculator</button>
+        <button type="button" role="tab" class="tab" data-tab="explain" aria-selected="false">Explain an identity</button>
+      </nav>
+
+      <section id="tab-calc" class="tabpanel">
+        <div class="panel builder">
+          <div class="panel-title">
+            <h3>Matrix editor</h3>
+            <span class="hint"><kbd>Tab</kbd>/<kbd>Enter</kbd>/arrows move · <kbd>Space</kbd> next cell · <kbd>;</kbd> next row · paste from Excel, MATLAB, NumPy or LaTeX · <kbd>⌘/Ctrl</kbd>+<kbd>Enter</kbd> saves</span>
+          </div>
+          <div class="grids" id="grids"></div>
+          <div class="quickops">
+            <div class="qo-row" id="unaryOps"></div>
+            <div class="qo-row" id="binaryOps" hidden></div>
+          </div>
+        </div>
+
+        <div class="panel console">
+          <div class="cmd-wrap">
+            <span class="prompt" aria-hidden="true">›</span>
+            <input id="cmd" class="cmd" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
+              placeholder="A = [1 2; 3 4]    A^-1    3I + A    <v, A v>    eig(A)    solve(A, b)" aria-label="Expression" />
+            <button type="button" id="runBtn" class="primary">Run</button>
+          </div>
+          <div id="preview" class="preview" aria-live="polite"></div>
+          <div class="chips" id="chips"></div>
+        </div>
+
+        <div id="history" class="history"></div>
+        <div id="historyEmpty" class="empty">
+          <p>Results appear here. A few things to try:</p>
+          <div class="examples" id="examples"></div>
+        </div>
+      </section>
+
+      <section id="tab-explain" class="tabpanel" hidden>
+        <div class="panel">
+          <div class="panel-title">
+            <h3>Why are these equal?</h3>
+            <span class="hint">Type an equation — I'll rewrite both sides with named rules, then test it on random matrices.</span>
+          </div>
+          <div class="cmd-wrap">
+            <span class="prompt" aria-hidden="true">≟</span>
+            <input id="eqInput" class="cmd" type="text" autocomplete="off" spellcheck="false" placeholder="<v, A w> = <A^T v, w>" aria-label="Equation" />
+            <label class="nsel" title="Size used for undefined matrices and vectors">n =
+              <select id="eqN"><option>2</option><option selected>3</option><option>4</option><option>5</option></select>
+            </label>
+            <button type="button" id="eqBtn" class="primary">Explain</button>
+          </div>
+          <p class="conventions">Names you haven't saved follow a convention: <b>Uppercase</b> = n×n matrix · <b>u, v, w, x, y, z, b…</b> = vectors in ℝⁿ · <b>a, c, k, s, t, λ…</b> = scalars. Saved workspace variables use their real sizes and values. Leave out “=” to just expand/simplify.</p>
+        </div>
+        <div id="eqOut"></div>
+        <div class="panel library">
+          <h3>Identity library</h3>
+          <ul id="library"></ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Settings popover -->
+  <div class="popover" id="settings" hidden role="dialog" aria-label="Settings">
+    <h3>Settings</h3>
+    <label class="row">Default size of <code>I</code> when it can't be inferred
+      <input type="number" id="setN" min="1" max="12" value="3" />
+    </label>
+    <label class="row">Inner product ⟨x, y⟩
+      <select id="setIP"></select>
+    </label>
+    <p class="small muted" id="ipNote"></p>
+    <label class="row check"><input type="checkbox" id="setSteps" checked /> Record steps (row operations, cofactors…)</label>
+    <div class="row end"><button type="button" class="primary" id="settingsDone">Done</button></div>
+  </div>
+
+  <!-- Help drawer -->
+  <div class="drawer" id="help" hidden role="dialog" aria-label="Syntax help">
+    <div class="drawer-head"><h3>Syntax cheat sheet</h3><button type="button" class="icon-btn" id="helpClose" aria-label="Close">✕</button></div>
+    <div class="drawer-body" id="helpBody"></div>
+  </div>
+  <div class="scrim" id="scrim" hidden></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script src="js/num.js"></script>
+  <script src="js/matrix.js"></script>
+  <script src="js/expr.js"></script>
+  <script src="js/identities.js"></script>
+  <script src="js/grid.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
