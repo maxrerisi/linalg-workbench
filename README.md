@@ -13,7 +13,8 @@ and digraph incidence matrices match Sage (−1 tail, +1 head, edges sorted).
 
 Also included:
 - `about(A)` — matrix "adjectives" (symmetric, triangular, REF/RREF, rank, nonsingular checklist)
-- `iseig(A, λ)`, `iseigvec(A, v, λ)`, `innull(A, v)`, `augment(A, B)`, `plot(u, v, …)`
+- `iseig(A, λ)`, `iseigvec(A, v, λ)`, `innull(A, v)`, `incol(A, b)`, `inrow(A, v)`, `inspan(b, v1, …)`, `plot(u, v, …)`
+- Augmented matrices `[A | b]` (or `augment(A, b)`) keep their bar through rref, steps, saving and copying
 - Matrix–vector products shown as linear combinations of columns
 - **Digraphs** tab: edge list → drawing, incidence matrix, net flow Aw, adjacency matrix
 - **Practice** tab: random problems with clean answers (rref, systems, inverses, EA = R, PA = LU, null spaces, eigenvalues…) and step-by-step solutions

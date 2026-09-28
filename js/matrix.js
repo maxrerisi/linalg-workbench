@@ -99,7 +99,7 @@
 
   // ---------- LaTeX ----------
   // aug: number of trailing columns after a bar, or an array of block widths (e.g. [3, 3, 3] for [U|L|P])
-  function latex(A, aug = 0) {
+  function latex(A, aug = A.aug || 0) {
     let body = A.a.map((row) => row.map((x) => N.toLatex(x)).join(' & ')).join(' \\\\ ');
     if (body.includes('\\frac')) body = body.replace(/\\frac/g, '\\dfrac');
     const widths = Array.isArray(aug) ? aug : aug > 0 ? [A.c - aug, aug] : null;
@@ -152,7 +152,7 @@
         [A[p], A[row]] = [A[row], A[p]];
         swaps++;
         if (opLog) opLog.push({ type: 'swap', i: row, j: p });
-        if (steps) steps.push({ ops: [swapTex(row, p)], mat: snap(), aug: augment });
+        if (steps) steps.push({ ops: [swapTex(row, p)], mat: snap(), aug: augment || M.aug || 0 });
       }
       const piv = A[row][col];
       if (reduced && !N.isOne(piv)) {
@@ -161,7 +161,7 @@
         A[row][col] = R.ONE;
         scaleProd = N.mul(scaleProd, piv);
         if (opLog) opLog.push({ type: 'scale', i: row, f });
-        if (steps) steps.push({ ops: [scaleTex(row, f)], mat: snap(), aug: augment });
+        if (steps) steps.push({ ops: [scaleTex(row, f)], mat: snap(), aug: augment || M.aug || 0 });
       }
       const ops = [], items = [];
       const pv = A[row][col];
@@ -177,11 +177,13 @@
         ops.push(addTex(r, row, N.neg(f)));
       }
       if (opLog && items.length) opLog.push({ type: 'adds', j: row, items });
-      if (steps && ops.length) steps.push({ ops, mat: snap(), aug: augment });
+      if (steps && ops.length) steps.push({ ops, mat: snap(), aug: augment || M.aug || 0 });
       pivots.push(col);
       row++;
     }
-    return { R: new Matrix(A), pivots, swaps, scaleProd };
+    const Rm = new Matrix(A);
+    if (M.aug && !augment) Rm.aug = M.aug; // rref([A | b]) keeps its bar
+    return { R: Rm, pivots, swaps, scaleProd };
   }
 
   // Elementary matrix for a logged row operation on an m-row matrix.

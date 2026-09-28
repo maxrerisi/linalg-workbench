@@ -25,11 +25,11 @@
   let recallIdx = -1;
 
   function serVal(v) {
-    if (v instanceof LA.Matrix) return { m: v.a.map((r) => r.map(N.serialize)) };
+    if (v instanceof LA.Matrix) return v.aug ? { m: v.a.map((r) => r.map(N.serialize)), aug: v.aug } : { m: v.a.map((r) => r.map(N.serialize)) };
     return { n: N.serialize(v) };
   }
   function deserVal(o) {
-    if (o.m) return new LA.Matrix(o.m.map((r) => r.map(N.deserialize)));
+    if (o.m) { const m = new LA.Matrix(o.m.map((r) => r.map(N.deserialize))); if (o.aug) m.aug = o.aug; return m; }
     return N.deserialize(o.n);
   }
   function saveWs() {
@@ -75,7 +75,8 @@
     if (!(v instanceof LA.Matrix)) return '';
     if (fmt === 'latex') return valueTex(v);
     if (fmt === 'numpy') return `np.array([${v.a.map((r) => '[' + r.map(t).join(', ') + ']').join(', ')}])`;
-    return '[' + v.a.map((r) => r.map(t).join(' ')).join('; ') + ']';
+    const k = fmt === 'text' && v.aug ? v.c - v.aug : -1; // keep the bar in re-usable text: [1 2 | 3; ...]
+    return '[' + v.a.map((r) => r.map((x, j) => (j === k ? '| ' : '') + t(x)).join(' ')).join('; ') + ']';
   }
 
   let toastTimer;
@@ -183,6 +184,7 @@
   ];
   const BINARY = [
     ['A·B', '{A} * {B}'], ['B·A', '{B} * {A}'], ['A+B', '{A} + {B}'], ['A−B', '{A} - {B}'], ['⟨A, B⟩', '<{A}, {B}>'],
+    ['[A | B]', '[{A} | {B}]'], ['rref[A | B]', 'rref([{A} | {B}])'], ['B ∈ Col(A)?', 'incol({A}, {B})'], ['B ∈ Null(A)?', 'innull({A}, {B})'],
     ['solve Ax = B', 'solve({A}, {B})'], ['A⁻¹B', 'inv({A}) * {B}'], ['proj of B onto A', 'proj({B}, {A})'],
   ];
   function renderQuickOps() {
@@ -251,7 +253,7 @@
 
   const CHIPS = [
     ['inv', 'inv(|)'], ['det', 'det(|)'], ['ᵀ', '|^T'], ['⁻¹', '|^-1'], ['⟨ , ⟩', '<|, >'], ['rref', 'rref(|)'], ['EA=R', 'elim(|)'], ['rank', 'rank(|)'],
-    ['tr', 'tr(|)'], ['eig', 'eig(|)'], ['iseig', 'iseig(|, )'], ['about', 'about(|)'], ['solve', 'solve(|, )'], ['null', 'null(|)'], ['col', 'col(|)'], ['gram', 'gram(|)'],
+    ['tr', 'tr(|)'], ['eig', 'eig(|)'], ['iseig', 'iseig(|, )'], ['incol', 'incol(|, )'], ['innull', 'innull(|, )'], ['[ | ]', '[| | ]'], ['about', 'about(|)'], ['solve', 'solve(|, )'], ['null', 'null(|)'], ['col', 'col(|)'], ['gram', 'gram(|)'],
     ['norm', 'norm(|)'], ['proj', 'proj(|, )'], ['cross', 'cross(|, )'], ['lu', 'lu(|)'], ['qr', 'qr(|)'], ['I(n)', 'I(|)'],
   ];
   for (const [label, tpl] of CHIPS) $('chips').append(el('button', { type: 'button', class: 'chip', onclick: () => insertTemplate(tpl) }, label));
@@ -745,6 +747,7 @@
       ['[1 2; 3 4]', 'rows separated by ; (or new lines), entries by spaces or commas'],
       ['[1; 2; 3]', 'column vector   ·   [1 2 3] is a row vector'],
       ['[v w]  [A b]', 'build from blocks: columns side by side, augmented matrices'],
+      ['[A | b]  [1 2 | 3; 4 5 | 6]', 'augmented matrix — the bar is kept through rref, steps, saving and copying'],
       ['1/3  -2.5  sqrt(2)', 'cells and entries can be any scalar expression'],
       ['I  I(4)  I3', 'identity; plain I takes its size from context (A + 3I)'],
       ['zeros(m,n) ones(n) rand(m,n) diag(1,2,3)', 'constructors'],
