@@ -110,7 +110,7 @@
       for (;;) {
         const t = peek();
         if (isOp(t, '*') || isOp(t, '/')) { next(); l = { type: 'bin', op: t.v, l, r: parseUnary() }; }
-        else if (startsPrimary(t) && !elementBreak(t) && !(isOp(t, '|') && /^\|/.test(ctx[ctx.length - 1] || ''))) {
+        else if (startsPrimary(t) && !elementBreak(t) && !(isOp(t, '|') && (inMat() || /^\|/.test(ctx[ctx.length - 1] || '')))) {
           l = { type: 'bin', op: '*', l, r: parsePow(), implicit: true };
         } else return l;
       }
@@ -197,19 +197,27 @@
       if (isOp(t, '[')) {
         next(); ctx.push('[');
         const rows = [[]];
+        const bars = [null]; // per row: number of elements before the augmentation bar "|"
         while (isOp(peek(), ';')) next();
         while (!isOp(peek(), ']')) {
           if (!peek()) fail('Missing closing "]"');
           rows[rows.length - 1].push(parseExpr());
           const u = peek();
-          if (isOp(u, ',')) next();
-          else if (isOp(u, ';')) { while (isOp(peek(), ';')) next(); if (!isOp(peek(), ']')) rows.push([]); }
+          if (isOp(u, '|')) {
+            const r = rows.length - 1;
+            if (bars[r] !== null) fail('Only one "|" per row in an augmented matrix', u);
+            next();
+            bars[r] = rows[r].length;
+            if (isOp(peek(), ']') || isOp(peek(), ';')) fail('Something must come after "|" (e.g. [A | b])', peek());
+          }
+          else if (isOp(u, ',')) next();
+          else if (isOp(u, ';')) { while (isOp(peek(), ';')) next(); if (!isOp(peek(), ']')) { rows.push([]); bars.push(null); } }
           else if (isOp(u, ']')) break;
           else if (!(u && u.sp && startsPrimary(u)) && !(u && elementBreak(u))) fail(u ? `Unexpected "${u.v}" in matrix` : 'Missing closing "]"', u);
         }
         expect(']'); ctx.pop();
         if (rows.length === 1 && rows[0].length === 0) fail('Empty matrix []', t);
-        return { type: 'matrix', rows };
+        return { type: 'matrix', rows, bars };
       }
       if (isOp(t, '<')) {
         next(); ctx.push('<');
@@ -422,7 +430,16 @@
             throw new MathError("Can't place I inside a matrix literal without a size — use I(n).");
           })
         );
-        return M.vcat(rows.map((r) => M.hcat(r)));
+        const out = M.vcat(rows.map((r) => M.hcat(r)));
+        if (node.bars && node.bars.some((b) => b !== null)) {
+          // column index of the bar in each row (blocks can span several columns)
+          const cols = node.bars.map((b, i) => (b === null ? null : rows[i].slice(0, b).reduce((s, m) => s + m.c, 0)));
+          const first = cols.find((c) => c !== null);
+          if (cols.some((c) => c === null)) throw new MathError('Put a "|" in every row of an augmented matrix (or use [A | b] with blocks).');
+          if (cols.some((c) => c !== first)) throw new MathError('The "|" bars must line up in every row.');
+          out.aug = out.c - first;
+        }
+        return out;
       }
       case 'index': {
         const base = lookup(node.name, ctx, node);
@@ -506,7 +523,8 @@
     const A = asMatrix(a, ctx), B = asMatrix(b, ctx);
     if (A.r !== B.r) throw new MathError(`Can't augment: ${A.dims} and ${B.dims} have different numbers of rows.`);
     const AB = M.hcat([A, B]);
-    return new Info('Augmented matrix', [{ tex: M.latex(AB, B.c) }], {}, AB);
+    AB.aug = B.c;
+    return AB;
   }, '[A | B]');
   def('innull', 'innull(A, v)', 2, 2, ([a, b], ctx) => {
     const A = asMatrix(a, ctx), v = colVec(asVec(b, ctx));
@@ -517,6 +535,20 @@
       { text: yes ? '✓ Yes — Av = 0, so v ∈ Null(A).' : '✗ No — Av ≠ 0, so v ∉ Null(A).' },
     ]);
   }, 'check whether Av = 0');
+  def('incol', 'incol(A, b)', 2, 2, ([a, b], ctx, node) => {
+    const A = asMatrix(a, ctx);
+    return membershipInfo(A, colVec(asVec(b, ctx)), 'col', stepsFor(ctx, `Row reducing [${labelOf(node, 0)} | ${labelOf(node, 1)}]`));
+  }, 'is b in Col(A)? (row reduce [A | b])');
+  def('inrow', 'inrow(A, v)', 2, 2, ([a, b], ctx, node) => {
+    const A = asMatrix(a, ctx);
+    return membershipInfo(M.transpose(A), colVec(asVec(b, ctx)), 'row', stepsFor(ctx, `Row reducing [${labelOf(node, 0)}ᵀ | ${labelOf(node, 1)}]`));
+  }, 'is v in Row(A)? (same as v ∈ Col(Aᵀ))');
+  def('inspan', 'inspan(b, v1, v2, …)', 2, 12, (args, ctx) => {
+    const vs = args.slice(1).map((x) => asVec(x, ctx));
+    const n = vs[0].length;
+    if (vs.some((v) => v.length !== n)) throw new MathError('The spanning vectors must all have the same length.');
+    return membershipInfo(M.fromCols(vs), colVec(asVec(args[0], ctx)), 'span', stepsFor(ctx, 'Row reducing [v₁ ⋯ vₖ | b]'));
+  }, 'is b a linear combination of v1, v2, …?');
   def('iseig', 'iseig(A, λ)', 2, 2, ([a, l], ctx) => {
     const A = asMatrix(a, ctx), lam = asScalar(l, 'a number λ');
     if (!A.isSquare) throw new MathError('Eigenvalues need a square matrix.');
@@ -684,6 +716,40 @@
     const A = asMatrix(a, ctx);
     return new Info('Size', [{ tex: `${A.r} \\times ${A.c}` }]);
   }, 'dimensions');
+
+  // Is b in Col(A) / Row(A) / span? Row reduce [A | b]: consistent ⇔ yes, and a solution gives the combination.
+  function membershipInfo(A, b, kind, steps) {
+    if (A.r !== b.r) throw new MathError(`b has ${b.r} entries but the ${kind === 'row' ? 'rows of A have' : 'columns have'} ${A.r}; they must match.`);
+    const aug = M.hcat([A, b]);
+    aug.aug = 1;
+    const res = M.solve(A, b, steps);
+    const R2 = M.rref(aug);
+    const where = kind === 'col' ? '\\operatorname{Col}(A)' : kind === 'row' ? '\\operatorname{Row}(A)' : '\\operatorname{span}\\{v_1, \\dots, v_k\\}';
+    const vec = kind === 'row' ? 'v' : 'b';
+    const name = (j) => (kind === 'col' ? `a_{${j + 1}}` : kind === 'row' ? `r_{${j + 1}}` : `v_{${j + 1}}`);
+    const title = kind === 'col' ? 'Is b in the column space?' : kind === 'row' ? 'Is v in the row space?' : 'Is b in the span?';
+    const blocks = [{ tex: `\\operatorname{rref}${M.latex(aug)} = ${M.latex(R2)}` }];
+    if (res.kind === 'none') {
+      blocks.push({ text: `✗ No — there is a pivot in the last column (a row reads 0 = 1), so the system is inconsistent and ${vec} is not a linear combination of the ${kind === 'row' ? 'rows of A' : kind === 'col' ? 'columns of A' : 'given vectors'}.` });
+      blocks.push({ tex: `${vec} \\notin ${where}` });
+      return new Info(title, blocks);
+    }
+    const x = (res.kind === 'unique' ? res.x : res.xp).col(0);
+    const terms = x.map((c, j) => ({ c, j })).filter(({ c }) => !N.isZero(c));
+    const combo = terms.length
+      ? terms.map(({ c, j }, k) => {
+          const neg = N.sign(c) < 0, a = N.abs(c);
+          const coef = N.isOne(a) ? '' : N.toLatex(a);
+          return `${k === 0 ? (neg ? '-' : '') : neg ? ' - ' : ' + '}${coef}${name(j)}`;
+        }).join('')
+      : '0';
+    blocks.push({ text: `✓ Yes — no pivot in the last column, so the system is consistent and ${vec} is a linear combination of the ${kind === 'row' ? 'rows of A' : kind === 'col' ? 'columns of A' : 'given vectors'}:` });
+    blocks.push({ tex: `${vec} = ${combo}${res.kind === 'infinite' ? '\\quad(\\text{one of infinitely many ways})' : ''}` });
+    const full = x.map((c, j) => `${N.sign(c) < 0 ? `\\left(${N.toLatex(c)}\\right)` : N.toLatex(c)}${M.latex(colVec(A.col(j)))}`).join(' + ');
+    if (A.c <= 6) blocks.push({ tex: `${full} = ${M.latex(b)}` });
+    blocks.push({ tex: `${vec} \\in ${where}` });
+    return new Info(title, blocks, { x: new Matrix(x.map((c) => [c])) });
+  }
 
   function aboutInfo(A) {
     const z = N.isZero, one = N.isOne;
