@@ -311,7 +311,41 @@
     updatePreview();
   }
 
+  // 🐇 Easter egg: type "neo" (while no variable of that name exists)
+  function wakeUpNeo() {
+    const cv = el('canvas', { class: 'neo-rain', 'aria-hidden': 'true' });
+    document.body.append(cv);
+    const ctx = cv.getContext('2d');
+    const fit = () => { cv.width = innerWidth; cv.height = innerHeight; };
+    fit();
+    const glyphs = '0123456789-½⅓¼λΣ[]|ᵀ⁻¹∈⟨⟩'.split('');
+    const size = 16, cols = Math.ceil(cv.width / size);
+    const drops = Array.from({ length: cols }, () => Math.random() * -40);
+    let raf, t0 = performance.now();
+    const frame = (t) => {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.font = `${size}px ${getComputedStyle(document.body).getPropertyValue('--mono') || 'monospace'}`;
+      drops.forEach((y, i) => {
+        ctx.fillStyle = Math.random() < 0.04 ? '#e8ffe8' : '#35d46a';
+        ctx.fillText(glyphs[(Math.random() * glyphs.length) | 0], i * size, y * size);
+        drops[i] = y * size > cv.height && Math.random() > 0.97 ? 0 : y + 1;
+      });
+      if (t - t0 < 5200) raf = requestAnimationFrame(frame); else stop();
+    };
+    const stop = () => { cancelAnimationFrame(raf); cv.classList.add('fade'); setTimeout(() => cv.remove(), 600); removeEventListener('keydown', stop); };
+    cv.addEventListener('click', stop);
+    setTimeout(() => addEventListener('keydown', stop, { once: true }), 0); // not the Enter that launched it
+    raf = requestAnimationFrame(frame);
+    addCard({ input: 'neo', res: { value: new LA.Info('Wake up, Neo…', [
+      { text: 'The Matrix has you. Follow the white rabbit 🐇' },
+      { tex: 'I^{\\mathsf T} = I^{-1} = I^{k} = I \\quad\\text{— there is no spoon, only the identity.}' },
+      { text: 'Red pill: rref(A).  Blue pill: det(A) = 0 and you believe whatever you want.' },
+    ]), notes: [], steps: [] } });
+  }
+
   function execute(src, { overlay = null, extraNote = null } = {}) {
+    if (src.trim().toLowerCase() === 'neo' && !('neo' in ws) && !overlay) { wakeUpNeo(); return; }
     const env = overlay ? Object.assign(Object.create(null), ws, overlay) : ws;
     let res;
     try {

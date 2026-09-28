@@ -374,3 +374,7 @@ details.steps summary { cursor: pointer; font-size: 13px; color: var(--accent); 
   .proof td.expr { width: auto; max-width: none; display: block; border-bottom: 0; padding-bottom: 0; }
   .proof td.why { display: block; padding-top: 2px; }
 }
+
+/* 🐇 */
+.neo-rain { position: fixed; inset: 0; z-index: 100; background: #000; cursor: pointer; transition: opacity 0.6s; }
+.neo-rain.fade { opacity: 0; }
