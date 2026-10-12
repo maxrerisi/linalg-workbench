@@ -571,6 +571,6 @@
     Matrix, fromCols, identity, zeros, fill, random, diag, transpose, add, sub, scale, mul, pow, equals,
     hcat, vcat, trace, isSymmetric, latex, eliminate, rref, ref, rank, det, inverse, minorMatrix,
     cofactorMatrix, adjugate, nullspace, colspace, rowspace, solve, charpoly, polyLatex, eigen, lu,
-    gramSchmidt, normalizeCols, cross, dotCols, isExactM, coefLatex, elimFactor, opLatex,
+    gramSchmidt, normalizeCols, cross, dotCols, isExactM, coefLatex, elimFactor, opLatex, evalPoly, deflate,
   };
 })();

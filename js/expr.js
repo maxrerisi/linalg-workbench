@@ -504,6 +504,7 @@
   }, 'determinant');
   def('tr trace', 'tr(A)', 1, 1, ([a], ctx) => M.trace(asMatrix(a, ctx)), 'trace');
   def('rank', 'rank(A)', 1, 1, ([a], ctx) => N.fromInt(M.rank(asMatrix(a, ctx))), 'rank');
+  def('nullity', 'nullity(A)', 1, 1, ([a], ctx) => { const A = asMatrix(a, ctx); return N.fromInt(A.c - M.rank(A)); }, 'nullity = dim Null(A) = #columns − rank');
   def('rref', 'rref(A)', 1, 1, ([a], ctx, node) => M.rref(asMatrix(a, ctx), stepsFor(ctx, `Row reduction of ${labelOf(node)}`)), 'reduced row echelon form');
   def('ref', 'ref(A)', 1, 1, ([a], ctx, node) => M.ref(asMatrix(a, ctx), stepsFor(ctx, `Row echelon form of ${labelOf(node)}`)), 'row echelon form');
   def('elim ea', 'elim(A)', 1, 1, ([a], ctx) => {
@@ -549,6 +550,8 @@
     if (vs.some((v) => v.length !== n)) throw new MathError('The spanning vectors must all have the same length.');
     return membershipInfo(M.fromCols(vs), colVec(asVec(args[0], ctx)), 'span', stepsFor(ctx, 'Row reducing [v₁ ⋯ vₖ | b]'));
   }, 'is b a linear combination of v1, v2, …?');
+  def('gm', 'gm(A, λ)', 2, 2, ([a, l], ctx, node) => multiplicityInfo(asMatrix(a, ctx), asScalar(l, 'a number λ'), 'gm', stepsFor(ctx, `Row reducing ${N.toText(asScalar(l))}I − ${labelOf(node)}`)), 'geometric multiplicity: nullity(λI − A)');
+  def('am', 'am(A, λ)', 2, 2, ([a, l], ctx) => multiplicityInfo(asMatrix(a, ctx), asScalar(l, 'a number λ'), 'am', null), 'algebraic multiplicity: multiplicity of λ as a root of χ_A(t)');
   def('iseig', 'iseig(A, λ)', 2, 2, ([a, l], ctx) => {
     const A = asMatrix(a, ctx), lam = asScalar(l, 'a number λ');
     if (!A.isSquare) throw new MathError('Eigenvalues need a square matrix.');
@@ -749,6 +752,46 @@
     if (A.c <= 6) blocks.push({ tex: `${full} = ${M.latex(b)}` });
     blocks.push({ tex: `${vec} \\in ${where}` });
     return new Info(title, blocks, { x: new Matrix(x.map((c) => [c])) });
+  }
+
+  // Algebraic multiplicity: how many times (t − λ) divides χ_A(t)
+  function algMult(A, lam) {
+    let c = M.charpoly(A), k = 0;
+    while (c.length > 1 && N.isZero(M.evalPoly(c, lam))) { c = M.deflate(c, lam); k++; }
+    return k;
+  }
+  // gm(A, λ) / am(A, λ) cards. Both report the other number too, since the point is usually comparing them.
+  function multiplicityInfo(A, lam, which, steps) {
+    if (!A.isSquare) throw new MathError(`Eigenvalues need a square matrix, but this one is ${A.dims}.`);
+    const n = A.r, L = N.toLatex(lam);
+    const LI = N.isOne(lam) ? 'I' : N.isOne(N.neg(lam)) ? '-I' : `${L}I`; // λI, written I / −I for ±1
+    const B = M.sub(M.scale(lam, M.identity(n)), A);
+    const { R: R2, pivots } = M.eliminate(B, { reduced: true, steps });
+    const gm = n - pivots.length;
+    const am = algMult(A, lam);
+    const free = [];
+    for (let j = 0; j < n; j++) if (!pivots.includes(j)) free.push(`x_{${j + 1}}`);
+    const blocks = [];
+    if (which === 'gm') {
+      blocks.push({ tex: `${LI} - A = ${M.latex(B)},\\qquad \\operatorname{rref}(${LI} - A) = ${M.latex(R2)}` });
+      blocks.push({ tex: `\\operatorname{gm}_A(${L}) = \\operatorname{nullity}(${LI} - A) = n - \\operatorname{rank}(${LI} - A) = ${n} - ${pivots.length} = ${gm}` });
+      if (gm > 0) {
+        blocks.push({ text: `${gm} free variable${gm > 1 ? 's' : ''} (${free.join(', ').replace(/[{}_]/g, '')}), so the eigenspace has dimension ${gm}:` });
+        blocks.push({ tex: `\\mathcal{E}_A(${L}) = \\operatorname{Null}(${LI} - A) = \\operatorname{span}\\left\\{${M.nullspace(B).map((v) => M.latex(colVec(v))).join(',\\ ')}\\right\\}` });
+      }
+    } else {
+      const c = M.charpoly(A);
+      blocks.push({ tex: `\\chi_A(t) = \\det(tI - A) = ${M.polyLatex(c, 't')}` });
+      blocks.push({ tex: `\\operatorname{am}_A(${L}) = ${am}\\quad${am ? `\\text{(}(t ${N.sign(lam) < 0 ? '+' : '-'} ${N.toLatex(N.abs(lam))})^{${am}}\\text{ divides } \\chi_A(t)\\text{)}` : `\\text{(}\\chi_A(${L}) \\neq 0\\text{)}`}` });
+    }
+    if (am === 0 && gm === 0) blocks.push({ text: `λ = ${N.toText(lam)} is not an eigenvalue of A (${N.toText(lam)}I − A is nonsingular), so am = gm = 0.` });
+    else {
+      blocks.push({ tex: `1 \\le \\operatorname{gm}_A(${L}) = ${gm} \\;\\le\\; \\operatorname{am}_A(${L}) = ${am}` });
+      blocks.push({ text: gm < am
+        ? `gm < am, so λ = ${N.toText(lam)} is defective: there aren't enough independent eigenvectors for it, and A is not diagonalizable.`
+        : `gm = am, so λ = ${N.toText(lam)} is not defective (A is diagonalizable exactly when this holds for every eigenvalue).` });
+    }
+    return new Info(which === 'gm' ? `Geometric multiplicity of λ = ${N.toText(lam)}` : `Algebraic multiplicity of λ = ${N.toText(lam)}`, blocks, {}, N.fromInt(which === 'gm' ? gm : am));
   }
 
   function aboutInfo(A) {
