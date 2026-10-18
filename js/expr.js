@@ -613,6 +613,21 @@
     if (u.length !== 3 || v.length !== 3) throw new MathError('Cross product is only defined for vectors in ℝ³.');
     return colVec(M.cross(u, v));
   }, 'cross product in ℝ³');
+  def('projmat projection', 'projmat(X) or projmat(v1, v2, …)', 1, 12, (args, ctx, node) => {
+    // One matrix argument: V = Col(X). Several vectors: V = span of them (like the course's basis_of_V).
+    let X;
+    if (args.length === 1) {
+      const a = args[0];
+      if (a instanceof Info && !a.value) throw new MathError('That subspace is {0}, so its projection matrix is the zero matrix.');
+      X = asMatrix(a, ctx);
+    } else {
+      const vs = args.map((x) => asVec(x, ctx));
+      if (vs.some((v) => v.length !== vs[0].length)) throw new MathError('The spanning vectors must all have the same length.');
+      X = M.fromCols(vs);
+    }
+    return projMatrixInfo(X, node && args.length === 1 ? labelOf(node) : null);
+  }, 'projection matrix P_V = X(XᵀX)⁻¹Xᵀ onto V = Col(X)');
+  def('subspaces fourfund', 'subspaces(A)', 1, 1, ([a], ctx) => fourSubspacesInfo(asMatrix(a, ctx)), 'the four fundamental subspaces: bases, dimensions, projection matrices');
   def('proj', 'proj(v, u)', 2, 2, ([a, b], ctx) => {
     const v = asMatrix(a, ctx), U = asMatrix(b, ctx);
     if (U.c === 1 || U.r === 1) {
@@ -792,6 +807,63 @@
         : `gm = am, so λ = ${N.toText(lam)} is not defective (A is diagonalizable exactly when this holds for every eigenvalue).` });
     }
     return new Info(which === 'gm' ? `Geometric multiplicity of λ = ${N.toText(lam)}` : `Algebraic multiplicity of λ = ${N.toText(lam)}`, blocks, {}, N.fromInt(which === 'gm' ? gm : am));
+  }
+
+  // Projection matrix onto V = Col(X): P_V = X(XᵀX)⁻¹Xᵀ, after reducing X to a basis (its pivot columns).
+  function projMatrix(X) {
+    const basis = M.colspace(X);
+    if (!basis.length) return { P: M.zeros(X.r, X.r), B: null };
+    const B = M.fromCols(basis);
+    const Bt = M.transpose(B);
+    const G = M.mul(Bt, B), Gi = M.inverse(G);
+    return { P: M.mul(B, M.mul(Gi, Bt)), B, G, Gi };
+  }
+  function projMatrixInfo(X, label) {
+    const { P, B, G, Gi } = projMatrix(X);
+    if (!B) return new Info('Projection matrix', [{ text: 'V = {0} (X is the zero matrix), so the projection matrix is the zero matrix.' }, { tex: `P_V = ${M.latex(P)}` }], { P }, P);
+    const n = X.r, k = B.c;
+    const blocks = [];
+    if (k < X.c) blocks.push({ text: `The ${X.c} columns are linearly dependent, so I use the ${k} pivot column${k > 1 ? 's' : ''} as a basis of V (P_V only depends on V, not on the basis).` });
+    blocks.push({ tex: `X = ${M.latex(B)}\\quad(\\text{columns form a basis of } V,\\ \\dim V = ${k})` });
+    if (k === 1) {
+      const v = B.col(0);
+      blocks.push({ tex: `P_V = \\frac{v v^{\\mathsf T}}{v^{\\mathsf T} v} = \\frac{1}{${N.toLatex(G.a[0][0])}}${M.latex(M.mul(B, M.transpose(B)))}` });
+    } else {
+      blocks.push({ tex: `X^{\\mathsf T}X = ${M.latex(G)},\\qquad (X^{\\mathsf T}X)^{-1} = ${M.latex(Gi)}` });
+    }
+    blocks.push({ tex: `P_V = X(X^{\\mathsf T}X)^{-1}X^{\\mathsf T} = ${M.latex(P)}` });
+    const sq = M.equals(M.mul(P, P), P), sym = M.isSymmetric(P);
+    blocks.push({ text: `Checks: P² = P ${sq ? '✓' : '✗'} · Pᵀ = P ${sym ? '✓' : '✗'} · rank(P) = dim V = ${k} · trace(P) = ${N.toText(M.trace(P))}` });
+    const Q = M.sub(M.identity(n), P);
+    blocks.push({ tex: `I - P_V = ${M.latex(Q)}\\quad\\text{projects onto } V^{\\perp}${label ? '' : ''}` });
+    blocks.push({ text: 'Project a vector with P v (e.g. P = ans, then P v), or use proj(v, X) directly.' });
+    return new Info('Projection matrix onto V', blocks, { P, Q }, P);
+  }
+
+  // The four fundamental subspaces, in the course's terms (pivot columns, pivot solutions), with projections.
+  function fourSubspacesInfo(A) {
+    const At = M.transpose(A);
+    const vecs = (list) => (list.length ? `\\left\\{${list.map((v) => M.latex(colVec(v))).join(',\\ ')}\\right\\}` : '\\{\\mathbf 0\\}');
+    const spaces = [
+      { name: 'Col(A)', tex: '\\operatorname{Col}(A)', basis: M.colspace(A), how: 'pivot columns of A', dim: A.r, part: 'Pcol' },
+      { name: 'Col(Aᵀ)', tex: '\\operatorname{Col}(A^{\\mathsf T})', basis: M.colspace(At), how: 'pivot columns of Aᵀ (rows of A)', dim: A.c, part: 'Prow' },
+      { name: 'Null(A)', tex: '\\operatorname{Null}(A)', basis: M.nullspace(A), how: 'pivot solutions to Av = 0', dim: A.c, part: 'Pnull' },
+      { name: 'Null(Aᵀ)', tex: '\\operatorname{Null}(A^{\\mathsf T})', basis: M.nullspace(At), how: 'pivot solutions to Aᵀv = 0', dim: A.r, part: 'Plnull' },
+    ];
+    const r = spaces[0].basis.length;
+    const blocks = [
+      { tex: `\\operatorname{rref}(A) = ${M.latex(M.rref(A))},\\qquad \\operatorname{rref}(A^{\\mathsf T}) = ${M.latex(M.rref(At))}` },
+      { text: `rank(A) = ${r}. Dimensions: dim Col(A) = dim Col(Aᵀ) = ${r}, dim Null(A) = ${A.c} − ${r} = ${A.c - r}, dim Null(Aᵀ) = ${A.r} − ${r} = ${A.r - r}.` },
+    ];
+    const parts = {};
+    for (const s of spaces) {
+      const P = s.basis.length ? projMatrix(M.fromCols(s.basis)).P : M.zeros(s.dim, s.dim);
+      parts[s.part] = P;
+      blocks.push({ text: `${s.name} ⊆ ℝ${'⁰¹²³⁴⁵⁶⁷⁸⁹'[s.dim] || '^' + s.dim} — basis from ${s.how}, dimension ${s.basis.length}:` });
+      blocks.push({ tex: `${s.tex} = \\operatorname{span}${vecs(s.basis)},\\qquad P_{${s.tex}} = ${M.latex(P)}` });
+    }
+    blocks.push({ text: 'Orthogonal complements: Col(Aᵀ) ⊥ Null(A) in ℝⁿ and Col(A) ⊥ Null(Aᵀ) in ℝᵐ, so P_Col(Aᵀ) + P_Null(A) = I and P_Col(A) + P_Null(Aᵀ) = I.' });
+    return new Info('The four fundamental subspaces', blocks, parts);
   }
 
   function aboutInfo(A) {

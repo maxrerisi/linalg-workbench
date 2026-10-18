@@ -179,7 +179,7 @@
 
   const UNARY = [
     ['adjectives', 'about({A})'], ['Aᵀ', '{A}^T'], ['A⁻¹', 'inv({A})'], ['det', 'det({A})'], ['rref', 'rref({A})'], ['EA = R', 'elim({A})'], ['rank', 'rank({A})'], ['trace', 'tr({A})'],
-    ['A²', '{A}^2'], ['AᵀA', 'gram({A})'], ['eigen', 'eig({A})'], ['char poly', 'charpoly({A})'], ['null space', 'null({A})'],
+    ['A²', '{A}^2'], ['AᵀA', 'gram({A})'], ['eigen', 'eig({A})'], ['P onto Col(A)', 'projmat({A})'], ['4 subspaces', 'subspaces({A})'], ['char poly', 'charpoly({A})'], ['null space', 'null({A})'],
     ['col space', 'col({A})'], ['PA = LU', 'lu({A})'], ['QR', 'qr({A})'], ['Gram–Schmidt', 'gs({A})'], ['‖A‖', 'norm({A})'],
   ];
   const BINARY = [
@@ -254,7 +254,7 @@
   const CHIPS = [
     ['inv', 'inv(|)'], ['det', 'det(|)'], ['ᵀ', '|^T'], ['⁻¹', '|^-1'], ['⟨ , ⟩', '<|, >'], ['rref', 'rref(|)'], ['EA=R', 'elim(|)'], ['rank', 'rank(|)'],
     ['tr', 'tr(|)'], ['eig', 'eig(|)'], ['iseig', 'iseig(|, )'], ['gm', 'gm(|, )'], ['am', 'am(|, )'], ['incol', 'incol(|, )'], ['innull', 'innull(|, )'], ['[ | ]', '[| | ]'], ['about', 'about(|)'], ['solve', 'solve(|, )'], ['null', 'null(|)'], ['col', 'col(|)'], ['gram', 'gram(|)'],
-    ['norm', 'norm(|)'], ['proj', 'proj(|, )'], ['cross', 'cross(|, )'], ['lu', 'lu(|)'], ['qr', 'qr(|)'], ['I(n)', 'I(|)'],
+    ['norm', 'norm(|)'], ['proj', 'proj(|, )'], ['projmat', 'projmat(|)'], ['subspaces', 'subspaces(|)'], ['cross', 'cross(|, )'], ['lu', 'lu(|)'], ['qr', 'qr(|)'], ['I(n)', 'I(|)'],
   ];
   for (const [label, tpl] of CHIPS) $('chips').append(el('button', { type: 'button', class: 'chip', onclick: () => insertTemplate(tpl) }, label));
 
