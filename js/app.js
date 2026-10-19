@@ -179,13 +179,13 @@
 
   const UNARY = [
     ['adjectives', 'about({A})'], ['Aᵀ', '{A}^T'], ['A⁻¹', 'inv({A})'], ['det', 'det({A})'], ['rref', 'rref({A})'], ['EA = R', 'elim({A})'], ['rank', 'rank({A})'], ['trace', 'tr({A})'],
-    ['A²', '{A}^2'], ['AᵀA', 'gram({A})'], ['eigen', 'eig({A})'], ['P onto Col(A)', 'projmat({A})'], ['4 subspaces', 'subspaces({A})'], ['char poly', 'charpoly({A})'], ['null space', 'null({A})'],
+    ['A²', '{A}^2'], ['AᵀA', 'gram({A})'], ['eigen', 'eig({A})'], ['P onto Col(A)', 'projmat({A})'], ['4 subspaces', 'subspaces({A})'], ['independent?', 'isindep({A})'], ['Col(A)⊥', 'perp({A})'], ['char poly', 'charpoly({A})'], ['null space', 'null({A})'],
     ['col space', 'col({A})'], ['PA = LU', 'lu({A})'], ['QR', 'qr({A})'], ['Gram–Schmidt', 'gs({A})'], ['‖A‖', 'norm({A})'],
   ];
   const BINARY = [
     ['A·B', '{A} * {B}'], ['B·A', '{B} * {A}'], ['A+B', '{A} + {B}'], ['A−B', '{A} - {B}'], ['⟨A, B⟩', '<{A}, {B}>'],
     ['[A | B]', '[{A} | {B}]'], ['rref[A | B]', 'rref([{A} | {B}])'], ['B ∈ Col(A)?', 'incol({A}, {B})'], ['B ∈ Null(A)?', 'innull({A}, {B})'],
-    ['solve Ax = B', 'solve({A}, {B})'], ['A⁻¹B', 'inv({A}) * {B}'], ['proj of B onto A', 'proj({B}, {A})'],
+    ['solve Ax = B', 'solve({A}, {B})'], ['least squares', 'lsq({A}, {B})'], ['least sq. via QR', 'qrlsq({A}, {B})'], ['A⁻¹B', 'inv({A}) * {B}'], ['proj of B onto A', 'proj({B}, {A})'],
   ];
   function renderQuickOps() {
     const a = gA.name, b = gB ? gB.name : 'B';
@@ -254,7 +254,7 @@
   const CHIPS = [
     ['inv', 'inv(|)'], ['det', 'det(|)'], ['ᵀ', '|^T'], ['⁻¹', '|^-1'], ['⟨ , ⟩', '<|, >'], ['rref', 'rref(|)'], ['EA=R', 'elim(|)'], ['rank', 'rank(|)'],
     ['tr', 'tr(|)'], ['eig', 'eig(|)'], ['iseig', 'iseig(|, )'], ['gm', 'gm(|, )'], ['am', 'am(|, )'], ['incol', 'incol(|, )'], ['innull', 'innull(|, )'], ['[ | ]', '[| | ]'], ['about', 'about(|)'], ['solve', 'solve(|, )'], ['null', 'null(|)'], ['col', 'col(|)'], ['gram', 'gram(|)'],
-    ['norm', 'norm(|)'], ['proj', 'proj(|, )'], ['projmat', 'projmat(|)'], ['subspaces', 'subspaces(|)'], ['cross', 'cross(|, )'], ['lu', 'lu(|)'], ['qr', 'qr(|)'], ['I(n)', 'I(|)'],
+    ['norm', 'norm(|)'], ['proj', 'proj(|, )'], ['projmat', 'projmat(|)'], ['subspaces', 'subspaces(|)'], ['lsq', 'lsq(|, )'], ['fit', 'fit(|)'], ['isindep', 'isindep(|)'], ['perp', 'perp(|)'], ['gs', 'gs(|)'], ['comp', 'comp(|, )'], ['cross', 'cross(|, )'], ['lu', 'lu(|)'], ['qr', 'qr(|)'], ['I(n)', 'I(|)'],
   ];
   for (const [label, tpl] of CHIPS) $('chips').append(el('button', { type: 'button', class: 'chip', onclick: () => insertTemplate(tpl) }, label));
 
@@ -671,10 +671,22 @@
     nullspace: 'Find rref(A), write pivot variables in terms of free variables, and pull out one vector per free variable.',
     eigen: 'Compute χ_A(t) = det(tI − A) and find its roots. For each root λ, row reduce λI − A to get a basis of Null(λI − A).',
     nonsingular: 'A square matrix is nonsingular exactly when rref(A) = I (equivalently rank(A) = n, or det(A) ≠ 0).',
+    colspace: 'Row reduce [A | b]. A pivot in the last column means b ∉ Col(A); otherwise a solution x gives b = x₁a₁ + x₂a₂ + ⋯.',
+    subspaces: 'Col(A): pivot columns of A. Col(Aᵀ): nonzero rows of rref(A). Null(A): pivot solutions of Av = 0. Null(Aᵀ): pivot solutions of Aᵀv = 0. dims: r, r, n − r, m − r.',
+    indep: 'Put the vectors in the columns of A and row reduce: independent exactly when every column is a pivot column (nullity 0).',
+    perp: 'V⊥ = Null(Xᵀ): row reduce Xᵀ and find the pivot solutions. Check dim V + dim V⊥ = n.',
+    projection: 'P_V = X(XᵀX)⁻¹Xᵀ with the columns of X a basis of V; for a single vector v it is vvᵀ/(vᵀv). Then project with P_V v.',
+    lsq: 'Solve the normal equations AᵀA x̂ = Aᵀb. Then E = ‖b − Ax̂‖².',
+    linefit: 'Rows of A are (1, tᵢ) and y holds the yᵢ; solve AᵀA x̂ = Aᵀy, and f̂(t) = x̂₀ + x̂₁t.',
+    qr: 'Gram–Schmidt: w₁ = a₁, wₖ = aₖ − Σ (wᵢ·aₖ)/(wᵢ·wᵢ) wᵢ. Normalize to get Q, then R = QᵀA.',
   };
   const prType = $('prType');
-  prType.append(el('option', { value: 'mix' }, 'Random mix'));
-  for (const [k, t] of Object.entries(LA.practice.TYPES)) prType.append(el('option', { value: k }, t.label));
+  prType.append(el('option', { value: 'mix2' }, 'Exam II mix (weeks 5–8)'), el('option', { value: 'mix1' }, 'Exam I mix (weeks 1–4)'), el('option', { value: 'mix' }, 'Everything'));
+  for (const [ex, label] of [[1, 'Exam I — weeks 1–4'], [2, 'Exam II — weeks 5–8'], [3, 'Week 9+']]) {
+    const g = el('optgroup', { label });
+    for (const [k, t] of Object.entries(LA.practice.TYPES)) if (t.exam === ex) g.append(el('option', { value: k }, t.label));
+    prType.append(g);
+  }
   function renderProblem() {
     const p = lastProblem;
     const box = $('prProblem');

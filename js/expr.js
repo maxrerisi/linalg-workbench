@@ -677,13 +677,22 @@
     const res = M.solve(A, B, stepsFor(ctx, `Solving ${labelOf(node, 0)}x = ${labelOf(node, 1)}`));
     return solutionInfo(res, A, B);
   }, 'solve Ax = b (all solutions)');
-  def('lsq', 'lsq(A, b)', 2, 2, ([a, b], ctx, node) => {
-    const A = asMatrix(a, ctx), B = asMatrix(b, ctx);
-    const At = M.transpose(A);
-    ctx.notes.push('Least squares: solving the normal equations AᵀA x̂ = Aᵀb.');
-    const res = M.solve(M.mul(At, A), M.mul(At, B), stepsFor(ctx, 'Normal equations AᵀA x̂ = Aᵀb'));
-    return solutionInfo(res, A, B, true);
-  }, 'least-squares solution');
+  def('lsq xhat leastsquares', 'lsq(A, b)', 2, 2, ([a, b], ctx) => leastSquaresInfo(asMatrix(a, ctx), colVec(asVec(b, ctx)), stepsFor(ctx, 'Row reducing the normal equations [AᵀA | Aᵀb]')), 'least squares: normal equations, x̂, projection Ax̂, error E');
+  def('pinv pseudoinverse', 'pinv(A)', 1, 1, ([a], ctx) => pinvInfo(asMatrix(a, ctx)), 'Moore–Penrose pseudoinverse A⁺ (exact)');
+  def('fit linefit', 'fit(points, degree)', 1, 2, (args, ctx) => {
+    const P = asMatrix(args[0], ctx);
+    let ts, ys, deg = 1;
+    if (args[1] !== undefined && !N.isNum(args[1]) && asMatrix(args[1], ctx).isVector) {
+      ts = asVec(P, ctx); ys = asVec(args[1], ctx); // fit(t, y)
+    } else {
+      if (P.c !== 2) throw new MathError('Give the data points as the rows of an n×2 matrix, e.g. fit([1 6; 2 5; 3 7; 4 10]).');
+      ts = P.col(0); ys = P.col(1);
+      if (args[1] !== undefined) deg = asInt(args[1], 'a degree');
+    }
+    if (ts.length !== ys.length) throw new MathError('t and y need the same number of entries.');
+    if (deg < 0 || deg > 6) throw new MathError('Degree must be between 0 and 6.');
+    return fitInfo(ts, ys, deg);
+  }, 'least-squares line (or polynomial) of best fit, with a plot');
   def('char charpoly', 'charpoly(A)', 1, 1, ([a], ctx) => {
     const c = M.charpoly(asMatrix(a, ctx));
     return new Info('Characteristic polynomial', [{ tex: `\\chi_A(t) = \\det(tI - A) = ${M.polyLatex(c, 't')}` }]);
@@ -698,18 +707,83 @@
     const parts = { P, L, U };
     return new Info('LU factorization', blocks, parts);
   }, 'LU factorization');
-  def('qr', 'qr(A)', 1, 1, ([a], ctx) => {
-    const A = asMatrix(a, ctx);
-    const Q = M.normalizeCols(M.gramSchmidt(A));
-    if (Q.c < A.c) throw new MathError('QR here needs linearly independent columns.');
-    const Rm = M.mul(M.transpose(Q), A).map((x, i, j) => (i > j ? R.ZERO : x));
-    return new Info('QR factorization (Gram–Schmidt)', [{ tex: 'A = QR,\\quad Q^{\\mathsf T}Q = I' }, { label: 'Q', tex: M.latex(Q) }, { label: 'R', tex: M.latex(Rm) }], { Q, R: Rm });
-  }, 'QR factorization');
-  def('gs', 'gs(A)', 1, 1, ([a], ctx, node) => {
-    ctx.notes.push('Columns are orthogonal (not normalized). Use orth(A) for an orthonormal basis.');
-    return M.gramSchmidt(asMatrix(a, ctx), stepsFor(ctx, `Gram–Schmidt on the columns of ${labelOf(node)}`));
-  }, 'Gram–Schmidt (orthogonal columns)');
-  def('orth', 'orth(A)', 1, 1, ([a], ctx, node) => M.normalizeCols(M.gramSchmidt(asMatrix(a, ctx), stepsFor(ctx, `Gram–Schmidt on the columns of ${labelOf(node)}`))), 'orthonormal basis of Col(A)');
+  def('qr', 'qr(A)', 1, 1, ([a], ctx, node) => qrInfo(asMatrix(a, ctx), stepsFor(ctx, `Gram–Schmidt on the columns of ${labelOf(node)}`)), 'A = QR via Gram–Schmidt, with P = QQᵀ');
+  def('qrlsq', 'qrlsq(A, b) or qrlsq(Q, R, b)', 2, 3, (args, ctx) => {
+    let Q, Rm, A;
+    const b = colVec(asVec(args[args.length - 1], ctx));
+    if (args.length === 3) {
+      Q = asMatrix(args[0], ctx); Rm = asMatrix(args[1], ctx);
+      if (!M.equals(M.mul(M.transpose(Q), Q), M.identity(Q.c))) throw new MathError('Q must have orthonormal columns (QᵀQ = I).');
+      if (!Rm.isSquare || Rm.a.some((row, i) => row.some((x, j) => i > j && !N.isZero(x)))) throw new MathError('R must be square and upper-triangular.');
+      A = M.mul(Q, Rm);
+    } else {
+      A = asMatrix(args[0], ctx);
+      ({ Q, R: Rm } = qrFactor(A));
+    }
+    const At = M.transpose(A), Qtb = M.mul(M.transpose(Q), b);
+    const N1 = M.hcat([M.mul(At, A), M.mul(At, b)]); N1.aug = 1;
+    const N2 = M.hcat([Rm, Qtb]); N2.aug = 1;
+    const R2 = M.rref(N2);
+    const xh = new Matrix(R2.a.map((r) => [r[r.length - 1]]));
+    return new Info('Least squares with A = QR', [
+      { tex: `A = QR = ${M.latex(Q)}${M.latex(Rm)} = ${M.latex(A)}` },
+      { text: 'Original least squares system:' },
+      { tex: `[A^{\\mathsf T}A \\mid A^{\\mathsf T}b] = ${M.latex(N1)}` },
+      { text: 'Since AᵀA = RᵀQᵀQR = RᵀR and Rᵀ is invertible, it reduces to Rx̂ = Qᵀb:' },
+      { tex: `[R \\mid Q^{\\mathsf T}b] = ${M.latex(N2)},\\qquad \\operatorname{rref}[R \\mid Q^{\\mathsf T}b] = ${M.latex(R2)}` },
+      { tex: `\\hat x = ${M.latex(xh)}` },
+    ], { xhat: xh }, xh);
+  }, 'least squares via QR: [R | Qᵀb]');
+  def('gs gramschmidt', 'gs(A) or gs(v1, v2, …)', 1, 12, (args, ctx) => {
+    const X = colsArg(args, ctx);
+    return gsInfo(X, stepsFor(ctx, 'Gram–Schmidt: wₖ = vₖ − Σ proj_{wᵢ}(vₖ)'));
+  }, 'Gram–Schmidt: mutually orthogonal and orthonormal bases');
+  def('orth', 'orth(A) or orth(v1, …)', 1, 12, (args, ctx) => M.normalizeCols(M.gramSchmidt(colsArg(args, ctx), stepsFor(ctx, 'Gram–Schmidt'))), 'orthonormal basis of the span (as columns)');
+  def('comp', 'comp(v, v1)', 2, 2, ([a, b], ctx) => {
+    const v = asVec(a, ctx), u = asVec(b, ctx);
+    if (v.length !== u.length) throw new MathError('comp needs two vectors of the same length.');
+    const uu = M.dotCols(u, u);
+    if (N.isZero(uu)) throw new MathError('Can\'t take a component along the zero vector.');
+    const c = N.div(M.dotCols(u, v), N.sqrt(uu));
+    ctx.notes.push('comp_{v₁}(v) = (v₁ · v) / ‖v₁‖ — the signed length of proj_{v₁}(v).');
+    return c;
+  }, 'scalar component of v in the direction of v1');
+  def('isorthonormal orthonormal isorth', 'isorthonormal(Q) or isorthonormal(v1, …)', 1, 12, (args, ctx) => {
+    const Q = colsArg(args, ctx);
+    const G = M.mul(M.transpose(Q), Q);
+    const on = M.equals(G, M.identity(Q.c));
+    const og = G.a.every((r, i) => r.every((x, j) => i === j || N.isZero(x)));
+    return new Info('Orthonormal?', [
+      { tex: `Q = ${M.latex(Q)},\\qquad Q^{\\mathsf T}Q = ${M.latex(G)}` },
+      { text: on ? '✓ Yes — QᵀQ = I, so the columns are orthonormal.'
+        : og ? '✗ Not orthonormal, but the columns are mutually orthogonal (QᵀQ is diagonal) — divide each by its length to normalize.'
+        : '✗ No — QᵀQ ≠ I (some columns are not orthogonal).' },
+    ]);
+  }, 'check QᵀQ = I');
+  def('perp orthcomp', 'perp(X) or perp(v1, v2, …)', 1, 12, (args, ctx) => {
+    const X = colsArg(args, ctx);
+    const basis = M.nullspace(M.transpose(X));
+    const dimV = M.rank(X), n = X.r;
+    const blocks = [
+      { tex: `V = \\operatorname{Col}(X),\\ X = ${M.latex(X)},\\qquad V^{\\perp} = \\operatorname{Null}(X^{\\mathsf T})` },
+      { tex: `\\operatorname{rref}(X^{\\mathsf T}) = ${M.latex(M.rref(M.transpose(X)))}` },
+      { tex: `V^{\\perp} = ${basis.length ? `\\operatorname{span}\\left\\{${basis.map((v) => M.latex(colVec(v))).join(',\\ ')}\\right\\}` : '\\{\\mathbf 0\\}'}` },
+      { text: `dim V + dim V⊥ = ${dimV} + ${basis.length} = ${n}. Any basis with the same span is equally correct (Sage may print a different one).` },
+    ];
+    return new Info('Orthogonal complement', blocks, basis.length ? { Vperp: M.fromCols(basis) } : {}, basis.length ? M.fromCols(basis) : null);
+  }, 'basis of the orthogonal complement V⊥ = Null(Xᵀ)');
+  def('isindep indep', 'isindep(A) or isindep(v1, v2, …)', 1, 12, (args, ctx) => indepInfo(colsArg(args, ctx)), 'linear independence: nullity = 0? (shows a dependence if not)');
+  def('basis', 'basis(v1, v2, …) or basis(A)', 1, 12, (args, ctx) => {
+    const X = colsArg(args, ctx);
+    const { pivots } = M.eliminate(X, { reduced: false });
+    if (!pivots.length) return new Info('Basis of the span', [{ text: 'All vectors are zero, so the span is {0} (empty basis, dimension 0).' }]);
+    const B = M.fromCols(pivots.map((j) => X.col(j)));
+    return new Info('Basis of the span', [
+      { tex: `\\operatorname{rref}${M.latex(X)} = ${M.latex(M.rref(X))}` },
+      { text: `Pivot columns ${pivots.map((p) => p + 1).join(', ')} form a basis; the span has dimension ${pivots.length}.` },
+      { tex: M.latex(B) },
+    ], { B }, B);
+  }, 'basis (pivot columns) and dimension of a span');
   def('adj', 'adj(A)', 1, 1, ([a], ctx) => M.adjugate(asMatrix(a, ctx)), 'adjugate');
   def('cof', 'cof(A)', 1, 1, ([a], ctx) => M.cofactorMatrix(asMatrix(a, ctx)), 'cofactor matrix');
   def('minor', 'minor(A, i, j)', 3, 3, ([a, i, j], ctx) => {
@@ -809,6 +883,179 @@
     return new Info(which === 'gm' ? `Geometric multiplicity of λ = ${N.toText(lam)}` : `Algebraic multiplicity of λ = ${N.toText(lam)}`, blocks, {}, N.fromInt(which === 'gm' ? gm : am));
   }
 
+  // Several vector args → their matrix of columns; one arg → that matrix.
+  function colsArg(args, ctx) {
+    if (args.length === 1) {
+      const a = args[0];
+      if (a instanceof Info && !a.value) throw new MathError('That subspace is {0}.');
+      return asMatrix(a, ctx);
+    }
+    const vs = args.map((x) => asVec(x, ctx));
+    if (vs.some((v) => v.length !== vs[0].length)) throw new MathError('All vectors must have the same length.');
+    return M.fromCols(vs);
+  }
+  const normSq = (v) => M.dotCols(v, v);
+
+  // Exact Moore–Penrose pseudoinverse from the rank factorization A = CF:  A⁺ = Fᵀ(FFᵀ)⁻¹(CᵀC)⁻¹Cᵀ
+  function pinv(A) {
+    const { R: Rr, pivots } = M.eliminate(A, { reduced: true });
+    if (!pivots.length) return M.zeros(A.c, A.r);
+    const C = M.fromCols(pivots.map((j) => A.col(j)));
+    const F = new Matrix(Rr.a.slice(0, pivots.length));
+    const Ft = M.transpose(F), Ct = M.transpose(C);
+    return M.mul(Ft, M.mul(M.inverse(M.mul(F, Ft)), M.mul(M.inverse(M.mul(Ct, C)), Ct)));
+  }
+  function pinvInfo(A) {
+    const P = pinv(A);
+    const full = M.rank(A) === A.c;
+    return new Info('Pseudoinverse', [
+      { tex: `A^{+} = ${M.latex(P)}` },
+      { text: full ? 'A has independent columns, so A⁺ = (AᵀA)⁻¹Aᵀ and x̂ = A⁺b is the unique least-squares solution.'
+        : 'A has dependent columns; A⁺b is the least-squares solution of smallest length (what Sage’s pseudoinverse() gives).' },
+    ], { Aplus: P }, P);
+  }
+
+  function leastSquaresInfo(A, b, steps) {
+    if (A.r !== b.r) throw new MathError(`A has ${A.r} rows but b has ${b.r} entries.`);
+    const At = M.transpose(A);
+    const Ab = M.hcat([A, b]); Ab.aug = 1;
+    const AtA = M.mul(At, A), Atb = M.mul(At, b);
+    const NE = M.hcat([AtA, Atb]); NE.aug = 1;
+    const consistent = M.solve(A, b).kind !== 'none';
+    const res = M.solve(AtA, Atb, steps);
+    const xh = M.mul(pinv(A), b);
+    const p = M.mul(A, xh), e = M.sub(b, p);
+    const E = normSq(e.col(0));
+    const blocks = [
+      { tex: `[A \\mid b] = ${M.latex(Ab)},\\qquad \\operatorname{rref}[A \\mid b] = ${M.latex(M.rref(Ab))}` },
+      { text: consistent ? 'Ax = b is consistent (b ∈ Col(A)), so the least-squares solution solves it exactly and E = 0.'
+        : 'Ax = b is inconsistent (pivot in the last column), so solve the normal equations AᵀA x̂ = Aᵀb instead:' },
+      { tex: `[A^{\\mathsf T}A \\mid A^{\\mathsf T}b] = ${M.latex(NE)},\\qquad \\operatorname{rref}[A^{\\mathsf T}A \\mid A^{\\mathsf T}b] = ${M.latex(M.rref(NE))}` },
+    ];
+    if (res.kind === 'unique') blocks.push({ tex: `\\hat x = ${M.latex(xh)}` });
+    else {
+      let tex = `\\hat x = ${M.latex(res.xp)}`;
+      res.basis.forEach((v, k) => { tex += ` + ${['s', 't', 'r', 'u'][k] || `t_{${k + 1}}`}${M.latex(colVec(v))}`; });
+      blocks.push({ text: 'AᵀA is singular (A has dependent columns), so there are infinitely many least-squares solutions:' });
+      blocks.push({ tex });
+      blocks.push({ tex: `\\text{shortest one: } \\hat x = A^{+}b = ${M.latex(xh)}` });
+    }
+    blocks.push({ tex: `A\\hat x = P_{\\operatorname{Col}(A)}\\,b = ${M.latex(p)},\\qquad b - A\\hat x = ${M.latex(e)}` });
+    blocks.push({ tex: `E = \\lVert b - A\\hat x\\rVert^{2} = ${N.toLatex(E)}${N.isZero(E) ? '' : `\\qquad (\\lVert b - A\\hat x\\rVert = ${N.toLatex(N.sqrt(E))})`}` });
+    blocks.push({ text: 'The error vector b − Ax̂ is orthogonal to Col(A): Aᵀ(b − Ax̂) = 0.' });
+    return new Info('Least squares', blocks, { xhat: xh, p, e }, xh);
+  }
+
+  function fitInfo(ts, ys, deg) {
+    const n = ts.length;
+    if (n < deg + 1) throw new MathError(`A degree-${deg} fit needs at least ${deg + 1} points.`);
+    const A = new Matrix(ts.map((t) => Array.from({ length: deg + 1 }, (_, k) => N.powInt(t, k))));
+    const y = colVec(ys);
+    const At = M.transpose(A);
+    const NE = M.hcat([M.mul(At, A), M.mul(At, y)]); NE.aug = 1;
+    const xh = M.mul(pinv(A), y);
+    const c = xh.col(0);
+    const e = M.sub(y, M.mul(A, xh));
+    const E = normSq(e.col(0));
+    const terms = [];
+    for (let k = deg; k >= 0; k--) {
+      const a = c[k];
+      if (N.isZero(a)) continue;
+      const neg = N.sign(a) < 0, m = N.abs(a);
+      const body = k === 0 ? N.toLatex(m) : (N.isOne(m) ? '' : N.toLatex(m)) + (k === 1 ? 't' : `t^{${k}}`);
+      terms.push((terms.length ? (neg ? ' - ' : ' + ') : neg ? '-' : '') + body);
+    }
+    const f = terms.join('') || '0';
+    const name = ['constant', 'line', 'quadratic', 'cubic'][deg] || `degree-${deg} polynomial`;
+    return new Info(`Least squares ${name} of best fit`, [
+      { tex: `A = ${M.latex(A)},\\quad y = ${M.latex(y)}\\qquad(\\text{rows of } A: ${Array.from({ length: deg + 1 }, (_, k) => (k === 0 ? '1' : k === 1 ? 't_i' : `t_i^{${k}}`)).join(',\\ ')})` },
+      { tex: `[A^{\\mathsf T}A \\mid A^{\\mathsf T}y] = ${M.latex(NE)},\\qquad \\operatorname{rref} = ${M.latex(M.rref(NE))}` },
+      { tex: `\\hat f(t) = ${f}` },
+      { tex: `E = \\textstyle\\sum_i \\big(y_i - \\hat f(t_i)\\big)^2 = ${N.toLatex(E)}` },
+      { svg: fitSvg(ts.map(N.toF), ys.map(N.toF), c.map(N.toF)) },
+    ], { xhat: xh }, xh);
+  }
+  function fitSvg(ts, ys, coef) {
+    const W = 340, H = 240, pad = 28;
+    const f = (t) => coef.reduce((s, a, k) => s + a * t ** k, 0);
+    let x0 = Math.min(...ts), x1 = Math.max(...ts);
+    const dx = (x1 - x0 || 2) * 0.15; x0 -= dx; x1 += dx;
+    const samples = Array.from({ length: 81 }, (_, i) => x0 + ((x1 - x0) * i) / 80);
+    const allY = ys.concat(samples.map(f));
+    let y0 = Math.min(...allY), y1 = Math.max(...allY);
+    const dy = (y1 - y0 || 2) * 0.12; y0 -= dy; y1 += dy;
+    const X = (x) => pad + ((x - x0) / (x1 - x0)) * (W - 2 * pad), Y = (y) => H - pad - ((y - y0) / (y1 - y0)) * (H - 2 * pad);
+    let g = '';
+    const step = (lo, hi) => { const r = hi - lo; const p = 10 ** Math.floor(Math.log10(r / 5)); return [1, 2, 5, 10].map((k) => k * p).find((s) => r / s <= 6) || p * 10; };
+    const sx = step(x0, x1), sy = step(y0, y1);
+    for (let x = Math.ceil(x0 / sx) * sx; x <= x1; x += sx) g += `<line x1="${X(x)}" y1="${pad}" x2="${X(x)}" y2="${H - pad}" stroke="var(--line)" stroke-width="${Math.abs(x) < 1e-9 ? 1.4 : 0.6}"/><text x="${X(x)}" y="${H - pad + 13}" font-size="9" fill="var(--muted)" text-anchor="middle">${+x.toFixed(6)}</text>`;
+    for (let y = Math.ceil(y0 / sy) * sy; y <= y1; y += sy) g += `<line x1="${pad}" y1="${Y(y)}" x2="${W - pad}" y2="${Y(y)}" stroke="var(--line)" stroke-width="${Math.abs(y) < 1e-9 ? 1.4 : 0.6}"/><text x="${pad - 4}" y="${Y(y) + 3}" font-size="9" fill="var(--muted)" text-anchor="end">${+y.toFixed(6)}</text>`;
+    const path = samples.map((t, i) => `${i ? 'L' : 'M'}${X(t).toFixed(1)},${Y(f(t)).toFixed(1)}`).join(' ');
+    const dots = ts.map((t, i) => `<line x1="${X(t)}" y1="${Y(ys[i])}" x2="${X(t)}" y2="${Y(f(t))}" stroke="var(--bad)" stroke-width="1" stroke-dasharray="3 2"/><circle cx="${X(t)}" cy="${Y(ys[i])}" r="4" fill="var(--accent)"/>`).join('');
+    return `<svg class="vplot" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Best-fit plot">${g}<path d="${path}" fill="none" stroke="var(--good)" stroke-width="2.2"/>${dots}</svg>`;
+  }
+
+  function qrFactor(A, steps) {
+    const W = M.gramSchmidt(A, steps);
+    if (W.c < A.c) throw new MathError('A = QR needs linearly independent columns (Gram–Schmidt produced a zero vector).');
+    const Q = M.normalizeCols(W);
+    const Rm = M.mul(M.transpose(Q), A).map((x, i, j) => (i > j ? R.ZERO : x));
+    return { W, Q, R: Rm };
+  }
+  function qrInfo(A, steps) {
+    const { W, Q, R: Rm } = qrFactor(A, steps);
+    const P = M.mul(Q, M.transpose(Q));
+    return new Info('A = QR factorization', [
+      { text: 'Gram–Schmidt on the columns of A gives a mutually orthogonal basis of Col(A):' },
+      { tex: `W = ${M.latex(W)}` },
+      { text: 'Normalize each column to get Q (orthonormal columns), then R = QᵀA (upper-triangular):' },
+      { tex: `Q = ${M.latex(Q)}` },
+      { tex: `R = Q^{\\mathsf T}A = ${M.latex(Rm)}` },
+      { tex: `P_{\\operatorname{Col}(A)} = QQ^{\\mathsf T} = ${M.latex(P)}` },
+      { text: 'For least squares, AᵀA x̂ = Aᵀb reduces to R x̂ = Qᵀb — try qrlsq(A, b).' },
+    ], { Q, R: Rm, P });
+  }
+  function gsInfo(X, steps) {
+    const W = M.gramSchmidt(X, steps);
+    const U = M.normalizeCols(W);
+    const vecs = (Mx) => Array.from({ length: Mx.c }, (_, j) => M.latex(colVec(Mx.col(j)))).join(',\\ ');
+    const blocks = [
+      { tex: `V = \\operatorname{span}\\left\\{${vecs(X)}\\right\\}` },
+      { text: `Mutually orthogonal basis of V (dimension ${W.c}):` },
+      { tex: `\\left\\{${vecs(W)}\\right\\}` },
+      { text: 'Orthonormal basis of V (divide each by its length):' },
+      { tex: `\\left\\{${vecs(U)}\\right\\}` },
+    ];
+    if (W.c < X.c) blocks.push({ text: `${X.c - W.c} of the vectors were dependent on earlier ones and were dropped.` });
+    return new Info('Gram–Schmidt', blocks, { W, Q: U }, W);
+  }
+
+  function indepInfo(X) {
+    const { R: Rr, pivots } = M.eliminate(X, { reduced: true });
+    const nul = X.c - pivots.length;
+    const blocks = [
+      { tex: `A = ${M.latex(X)},\\qquad \\operatorname{rref}(A) = ${M.latex(Rr)}` },
+      { tex: `\\operatorname{nullity}(A) = ${X.c} - ${pivots.length} = ${nul}` },
+    ];
+    if (!nul) {
+      blocks.push({ text: `✓ Linearly independent — every column is a pivot column (nullity 0), so the only solution to c₁v₁ + ⋯ + c${'ₖ'}vₖ = 0 is c = 0.` });
+    } else {
+      blocks.push({ text: `✗ Linearly dependent — nullity ${nul} > 0. Each non-pivot column is a combination of the pivot columns before it:` });
+      const name = (j) => `v_{${j + 1}}`;
+      for (let j = 0; j < X.c; j++) {
+        if (pivots.includes(j)) continue;
+        const terms = pivots.map((pc, i) => ({ c: Rr.a[i][j], pc })).filter(({ c, pc }) => pc < j && !N.isZero(c));
+        const rhs = terms.length ? terms.map(({ c, pc }, k) => {
+          const neg = N.sign(c) < 0, m = N.abs(c);
+          return `${k ? (neg ? ' - ' : ' + ') : neg ? '-' : ''}${N.isOne(m) ? '' : N.toLatex(m)}${name(pc)}`;
+        }).join('') : '\\mathbf 0';
+        blocks.push({ tex: `${name(j)} = ${rhs}` });
+      }
+      blocks.push({ text: 'A basis of the span: the pivot columns ' + pivots.map((p) => `v${p + 1}`).join(', ') + '.' });
+    }
+    return new Info('Linear independence', blocks);
+  }
+
   // Projection matrix onto V = Col(X): P_V = X(XᵀX)⁻¹Xᵀ, after reducing X to a basis (its pivot columns).
   function projMatrix(X) {
     const basis = M.colspace(X);
@@ -845,8 +1092,8 @@
     const At = M.transpose(A);
     const vecs = (list) => (list.length ? `\\left\\{${list.map((v) => M.latex(colVec(v))).join(',\\ ')}\\right\\}` : '\\{\\mathbf 0\\}');
     const spaces = [
-      { name: 'Col(A)', tex: '\\operatorname{Col}(A)', basis: M.colspace(A), how: 'pivot columns of A', dim: A.r, part: 'Pcol' },
-      { name: 'Col(Aᵀ)', tex: '\\operatorname{Col}(A^{\\mathsf T})', basis: M.colspace(At), how: 'pivot columns of Aᵀ (rows of A)', dim: A.c, part: 'Prow' },
+      { name: 'Col(A)', tex: '\\operatorname{Col}(A)', basis: M.colspace(A), how: 'pivot columns of A', dim: A.r, part: 'Pcol', alt: M.rowspace(At), altHow: 'nonzero rows of rref(Aᵀ)' },
+      { name: 'Col(Aᵀ)', tex: '\\operatorname{Col}(A^{\\mathsf T})', basis: M.colspace(At), how: 'pivot columns of Aᵀ (rows of A)', dim: A.c, part: 'Prow', alt: M.rowspace(A), altHow: 'nonzero rows of rref(A)' },
       { name: 'Null(A)', tex: '\\operatorname{Null}(A)', basis: M.nullspace(A), how: 'pivot solutions to Av = 0', dim: A.c, part: 'Pnull' },
       { name: 'Null(Aᵀ)', tex: '\\operatorname{Null}(A^{\\mathsf T})', basis: M.nullspace(At), how: 'pivot solutions to Aᵀv = 0', dim: A.r, part: 'Plnull' },
     ];
@@ -861,6 +1108,7 @@
       parts[s.part] = P;
       blocks.push({ text: `${s.name} ⊆ ℝ${'⁰¹²³⁴⁵⁶⁷⁸⁹'[s.dim] || '^' + s.dim} — basis from ${s.how}, dimension ${s.basis.length}:` });
       blocks.push({ tex: `${s.tex} = \\operatorname{span}${vecs(s.basis)},\\qquad P_{${s.tex}} = ${M.latex(P)}` });
+      if (s.alt && s.alt.length) blocks.push({ tex: `\\text{another basis (${s.altHow}): }${vecs(s.alt)}` });
     }
     blocks.push({ text: 'Orthogonal complements: Col(Aᵀ) ⊥ Null(A) in ℝⁿ and Col(A) ⊥ Null(Aᵀ) in ℝᵐ, so P_Col(Aᵀ) + P_Null(A) = I and P_Col(A) + P_Null(Aᵀ) = I.' });
     return new Info('The four fundamental subspaces', blocks, parts);
