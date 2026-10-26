@@ -99,7 +99,36 @@
 
   // ---------- LaTeX ----------
   // aug: number of trailing columns after a bar, or an array of block widths (e.g. [3, 3, 3] for [U|L|P])
-  function latex(A, aug = A.aug || 0) {
+  // Common rational factor: A = c·K with K an integer matrix whose entries have gcd 1.
+  // Returns null unless A is exact-rational and actually has fractions (otherwise nothing to gain).
+  function commonFactor(A) {
+    if (A.r * A.c < 2 || !A.a.every((r) => r.every(N.isR))) return null;
+    const babs = (x) => (x < 0n ? -x : x);
+    let L = 1n;
+    for (const row of A.a) for (const x of row) L = (L * x.d) / N.bgcd(L, x.d);
+    if (L === 1n) return null;
+    const ints = A.a.map((r) => r.map((x) => (x.n * L) / x.d));
+    let g = 0n;
+    for (const row of ints) for (const k of row) g = N.bgcd(g, k);
+    if (g === 0n) return null;
+    // pull out a minus sign too when every nonzero entry is negative
+    if (ints.every((r) => r.every((k) => k <= 0n))) g = -g;
+    const K = ints.map((r) => r.map((k) => k / g));
+    if (K.some((r) => r.some((k) => babs(k) > 99999n))) return null; // would not be easier to read
+    return { c: new R(g, L), K: new Matrix(K.map((r) => r.map((k) => new R(k)))) };
+  }
+  let factorFractions = true;
+  function setFactorFractions(on) { factorFractions = !!on; }
+
+  function latex(A, aug = A.aug || 0, { factor = factorFractions } = {}) {
+    const widths0 = Array.isArray(aug) ? aug : aug > 0 ? true : null;
+    if (factor && !widths0 && N.getMode() === 'frac') {
+      const f = commonFactor(A);
+      if (f) {
+        const c = N.toLatex(f.c);
+        return `${N.isOne(N.neg(f.c)) ? '-' : c}${latex(f.K, 0, { factor: false })}`;
+      }
+    }
     let body = A.a.map((row) => row.map((x) => N.toLatex(x)).join(' & ')).join(' \\\\ ');
     if (body.includes('\\frac')) body = body.replace(/\\frac/g, '\\dfrac');
     const widths = Array.isArray(aug) ? aug : aug > 0 ? [A.c - aug, aug] : null;
@@ -218,7 +247,7 @@
   function det(A, steps) {
     needSquare(A, 'The determinant');
     const n = A.r;
-    const L = (M) => latex(M).replace('bmatrix', 'vmatrix').replace('bmatrix', 'vmatrix');
+    const L = (M) => latex(M, 0, { factor: false }).replace('bmatrix', 'vmatrix').replace('bmatrix', 'vmatrix');
     if (n === 1) return A.a[0][0];
     if (n === 2) {
       const [[a, b], [c, d]] = A.a;
@@ -571,6 +600,6 @@
     Matrix, fromCols, identity, zeros, fill, random, diag, transpose, add, sub, scale, mul, pow, equals,
     hcat, vcat, trace, isSymmetric, latex, eliminate, rref, ref, rank, det, inverse, minorMatrix,
     cofactorMatrix, adjugate, nullspace, colspace, rowspace, solve, charpoly, polyLatex, eigen, lu,
-    gramSchmidt, normalizeCols, cross, dotCols, isExactM, coefLatex, elimFactor, opLatex, evalPoly, deflate,
+    commonFactor, setFactorFractions, gramSchmidt, normalizeCols, cross, dotCols, isExactM, coefLatex, elimFactor, opLatex, evalPoly, deflate,
   };
 })();

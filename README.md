@@ -16,6 +16,7 @@ Also included:
 - Least squares: `lsq(A, b)` (normal equations, x̂, Ax̂, error E), `fit(points, degree)` with a plot, `pinv(A)`, `qrlsq(A, b)` / `qrlsq(Q, R, b)`
 - `qr(A)` with P = QQᵀ, `gs(v1, …)` (orthogonal + orthonormal bases), `comp(v, v1)`, `isorthonormal(Q)`, `perp(X)` (V⊥), `isindep(...)`, `basis(...)`
 - Practice tab: Exam I / Exam II / week 9 problem sets
+- Matrices with fractions display with the common factor pulled out, e.g. (1/27)·[2 −5; …] (toggle in ⚙ settings); `factor(A)` writes A = c·K explicitly
 - `projmat(X)` / `projmat(v1, v2, …)`: projection matrix P_V = X(XᵀX)⁻¹Xᵀ onto V; `subspaces(A)`: the four fundamental subspaces with bases, dimensions and projection matrices
 - `gm(A, λ)`, `am(A, λ)` (geometric/algebraic multiplicity, defective check), `nullity(A)`
 - `iseig(A, λ)`, `iseigvec(A, v, λ)`, `innull(A, v)`, `incol(A, b)`, `inrow(A, v)`, `inspan(b, v1, …)`, `plot(u, v, …)`

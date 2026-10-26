@@ -20,7 +20,8 @@
 
   // ---------- state ----------
   const ws = {};
-  const settings = Object.assign({ defaultN: 3, ipWeight: '', steps: true }, store.get('la-settings', {}));
+  const settings = Object.assign({ defaultN: 3, ipWeight: '', steps: true, factor: true }, store.get('la-settings', {}));
+  M.setFactorFractions(settings.factor);
   const recall = store.get('la-recall', []);
   let recallIdx = -1;
 
@@ -254,7 +255,7 @@
   const CHIPS = [
     ['inv', 'inv(|)'], ['det', 'det(|)'], ['ᵀ', '|^T'], ['⁻¹', '|^-1'], ['⟨ , ⟩', '<|, >'], ['rref', 'rref(|)'], ['EA=R', 'elim(|)'], ['rank', 'rank(|)'],
     ['tr', 'tr(|)'], ['eig', 'eig(|)'], ['iseig', 'iseig(|, )'], ['gm', 'gm(|, )'], ['am', 'am(|, )'], ['incol', 'incol(|, )'], ['innull', 'innull(|, )'], ['[ | ]', '[| | ]'], ['about', 'about(|)'], ['solve', 'solve(|, )'], ['null', 'null(|)'], ['col', 'col(|)'], ['gram', 'gram(|)'],
-    ['norm', 'norm(|)'], ['proj', 'proj(|, )'], ['projmat', 'projmat(|)'], ['subspaces', 'subspaces(|)'], ['lsq', 'lsq(|, )'], ['fit', 'fit(|)'], ['isindep', 'isindep(|)'], ['perp', 'perp(|)'], ['gs', 'gs(|)'], ['comp', 'comp(|, )'], ['cross', 'cross(|, )'], ['lu', 'lu(|)'], ['qr', 'qr(|)'], ['I(n)', 'I(|)'],
+    ['norm', 'norm(|)'], ['proj', 'proj(|, )'], ['projmat', 'projmat(|)'], ['subspaces', 'subspaces(|)'], ['factor', 'factor(|)'], ['lsq', 'lsq(|, )'], ['fit', 'fit(|)'], ['isindep', 'isindep(|)'], ['perp', 'perp(|)'], ['gs', 'gs(|)'], ['comp', 'comp(|, )'], ['cross', 'cross(|, )'], ['lu', 'lu(|)'], ['qr', 'qr(|)'], ['I(n)', 'I(|)'],
   ];
   for (const [label, tpl] of CHIPS) $('chips').append(el('button', { type: 'button', class: 'chip', onclick: () => insertTemplate(tpl) }, label));
 
@@ -436,7 +437,7 @@
         for (const it of g.items) {
           if (it.text) { grp.append(el('div', { class: 'step text' }, texEl(it.text, /matrix|array/.test(it.text)))); continue; }
           const ops = it.ops.length > 1 ? `\\begin{gathered}${it.ops.join('\\\\')}\\end{gathered}` : it.ops[0];
-          grp.append(el('div', { class: 'step' }, el('div', { class: 'ops' }, texEl(ops, false)), el('div', { class: 'mat' }, texEl(M.latex(it.mat, it.aug), false))));
+          grp.append(el('div', { class: 'step' }, el('div', { class: 'ops' }, texEl(ops, false)), el('div', { class: 'mat' }, texEl(M.latex(it.mat, it.aug, { factor: false }), false))));
         }
         det.append(grp);
       }
@@ -780,6 +781,8 @@
   $('setIP').addEventListener('change', (e) => { settings.ipWeight = e.target.value; saveSettings(); renderIpOptions(); toast(settings.ipWeight ? `Inner product now uses ${settings.ipWeight}` : 'Standard inner product'); });
   $('setN').value = settings.defaultN;
   $('setN').addEventListener('change', (e) => { settings.defaultN = Math.max(1, Math.min(12, parseInt(e.target.value, 10) || 3)); e.target.value = settings.defaultN; saveSettings(); updatePreview(); });
+  $('setFactor').checked = settings.factor;
+  $('setFactor').addEventListener('change', (e) => { settings.factor = e.target.checked; saveSettings(); M.setFactorFractions(settings.factor); rerenderAll(); });
   $('setSteps').checked = settings.steps;
   $('setSteps').addEventListener('change', (e) => { settings.steps = e.target.checked; saveSettings(); });
   const closePop = () => { pop.hidden = true; };

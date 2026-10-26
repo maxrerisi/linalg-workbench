@@ -586,6 +586,17 @@
     });
     return new Info('Vectors in ℝ²', [{ svg: plotSvg(vs) }]);
   }, 'draw 2D vectors');
+  def('factor', 'factor(A)', 1, 1, ([a], ctx) => {
+    const A = asMatrix(a, ctx);
+    const f = M.commonFactor(A);
+    if (!f) {
+      return new Info('Factor out a common fraction', [{ text: A.a.every((r) => r.every(N.isR)) ? 'No fractions to factor out — the entries are already integers.' : 'Factoring needs exact rational entries (this matrix has square roots or decimals).' }]);
+    }
+    return new Info('Factor out a common fraction', [
+      { tex: `${M.latex(A, 0, { factor: false })} = ${N.toLatex(f.c)}${M.latex(f.K, 0, { factor: false })}` },
+      { text: `c = ${N.toText(f.c)} is the gcd of the numerators over the lcm of the denominators, so the matrix left over has integer entries with no common factor.` },
+    ], { c: f.c, K: f.K }, f.K); // K = factor(A) saves the integer matrix
+  }, 'write A = c·K with K an integer matrix');
   def('transpose', 'transpose(A)', 1, 1, ([a], ctx) => vT(a, ctx), 'transpose');
   def('gram', 'gram(A)', 1, 1, ([a], ctx) => { const A = asMatrix(a, ctx); ctx.notes.push('Gram matrix G = AᵀA: entry (i, j) is ⟨aᵢ, aⱼ⟩ for columns aᵢ of A.'); return M.mul(M.transpose(A), A); }, 'Gram matrix AᵀA');
   def('norm', 'norm(v)', 1, 1, ([a], ctx) => {
