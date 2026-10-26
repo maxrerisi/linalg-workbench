@@ -597,6 +597,19 @@
       { text: `c = ${N.toText(f.c)} is the gcd of the numerators over the lcm of the denominators, so the matrix left over has integer entries with no common factor.` },
     ], { c: f.c, K: f.K }, f.K); // K = factor(A) saves the integer matrix
   }, 'write A = c·K with K an integer matrix');
+  def('Col', 'Col(A)', 1, 1, (args, ctx, node) => FUNCS.col.fn(args, ctx, node), 'column space (same as col)');
+  def('Row', 'Row(A)', 1, 1, (args, ctx, node) => FUNCS.row.fn(args, ctx, node), 'row space (same as row)');
+  def('Null', 'Null(A)', 1, 1, (args, ctx, node) => FUNCS.null.fn(args, ctx, node), 'null space (same as null)');
+  def('lnull LNull', 'lnull(A)', 1, 1, ([a], ctx, node) => FUNCS.null.fn([M.transpose(asMatrix(a, ctx))], ctx, node), 'left null space Null(Aᵀ)');
+  def('span Span', 'span(v1, v2, …)', 1, 12, (args, ctx) => {
+    const X = colsArg(args, ctx);
+    const { pivots } = M.eliminate(X, { reduced: false });
+    if (!pivots.length) return new Info('Span', [{ tex: '\\{\\mathbf 0\\}' }]);
+    return M.fromCols(pivots.map((j) => X.col(j)));
+  }, 'basis of the span (pivot columns)');
+  def('spaceeq sameSpace', 'spaceeq(V, W)', 2, 2, (args, ctx, node) => relationInfo('eq', node.args[0], node.args[1], ctx, true), 'are two subspaces equal? e.g. spaceeq(Col(A), Null(B))');
+  def('isperp', 'isperp(V, W)', 2, 2, (args, ctx, node) => relationInfo('perp', node.args[0], node.args[1], ctx, true), 'are two subspaces orthogonal? e.g. isperp(Col(A), Null(B))');
+  def('issub', 'issub(V, W)', 2, 2, (args, ctx, node) => relationInfo('sub', node.args[0], node.args[1], ctx, true), 'is V contained in W?');
   def('transpose', 'transpose(A)', 1, 1, ([a], ctx) => vT(a, ctx), 'transpose');
   def('gram', 'gram(A)', 1, 1, ([a], ctx) => { const A = asMatrix(a, ctx); ctx.notes.push('Gram matrix G = AᵀA: entry (i, j) is ⟨aᵢ, aⱼ⟩ for columns aᵢ of A.'); return M.mul(M.transpose(A), A); }, 'Gram matrix AᵀA');
   def('norm', 'norm(v)', 1, 1, ([a], ctx) => {
@@ -1125,6 +1138,130 @@
     return new Info('The four fundamental subspaces', blocks, parts);
   }
 
+  // ---------- subspace relations ----------
+  const SPACE_FNS = {
+    col: 'col', Col: 'col', colspace: 'col', range: 'col', row: 'row', Row: 'row', rowspace: 'row',
+    null: 'null', Null: 'null', nullspace: 'null', kernel: 'null', lnull: 'lnull', LNull: 'lnull',
+    span: 'span', Span: 'span', perp: 'perp', orthcomp: 'perp',
+  };
+  const supN = (n) => String(n).split('').map((d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'[d]).join('');
+  // A subspace from an expression: its basis (columns, or null for {0}), ambient dimension n, and a label.
+  function spaceOf(node, ctx, forceSpace) {
+    const inner = node.type === 'group' ? node.a : node;
+    const kind = inner.type === 'call' ? SPACE_FNS[inner.name] : null;
+    const argText = inner.args ? inner.args.map(exprText).join(', ') : '';
+    let basis, n, label;
+    if (kind && kind !== 'span' && kind !== 'perp') {
+      const A = asMatrix(evaluate(inner.args[0], ctx), ctx);
+      if (kind === 'col') { basis = M.colspace(A); n = A.r; label = `Col(${argText})`; }
+      if (kind === 'row') { basis = M.rowspace(A); n = A.c; label = `Row(${argText})`; }
+      if (kind === 'null') { basis = M.nullspace(A); n = A.c; label = `Null(${argText})`; }
+      if (kind === 'lnull') { basis = M.nullspace(M.transpose(A)); n = A.r; label = `Null(${argText}ᵀ)`; }
+    } else if (kind === 'span' || kind === 'perp') {
+      const X = colsArg(inner.args.map((a) => evaluate(a, ctx)), ctx);
+      n = X.r;
+      if (kind === 'span') { basis = M.colspace(X); label = `Span(${argText})`; }
+      else { basis = M.nullspace(M.transpose(X)); label = `(${inner.args.length > 1 ? `Span(${argText})` : `Col(${argText})`})⊥`; }
+    } else {
+      const v = evaluate(node, ctx);
+      if (!forceSpace && !(v instanceof Matrix)) return null;
+      const X = asMatrix(v, ctx);
+      basis = M.colspace(X); n = X.r;
+      label = X.c === 1 ? `Span(${exprText(node)})` : `Col(${exprText(node)})`;
+    }
+    return { basis: basis.length ? M.fromCols(basis) : null, dim: basis.length, n, label };
+  }
+  const spanTex = (S) => (S.basis ? `\\operatorname{span}\\left\\{${Array.from({ length: S.basis.c }, (_, j) => M.latex(colVec(S.basis.col(j)))).join(',\\ ')}\\right\\}` : '\\{\\mathbf 0\\}');
+  const labelTex = (l) => l.replace(/ᵀ/g, '^{\\mathsf T}').replace(/⊥/g, '^{\\perp}').replace(/^(Col|Row|Null|Span)/, '\\operatorname{$1}');
+
+  function relationInfo(op, lnode, rnode, ctx, fromFn = false) {
+    const isSpaceNode = (nd) => { const x = nd.type === 'group' ? nd.a : nd; return x.type === 'call' && !!SPACE_FNS[x.name]; };
+    // "=" between ordinary expressions: plain equality of values
+    if (op === 'eq' && !fromFn && !isSpaceNode(lnode) && !isSpaceNode(rnode)) return valueEqInfo(lnode, rnode, ctx);
+    const V = spaceOf(lnode, ctx, true), W = spaceOf(rnode, ctx, true);
+    const head = [
+      { tex: `V = ${labelTex(V.label)} = ${spanTex(V)}\\quad(\\dim ${V.dim} \\text{ in } \\mathbb{R}^{${V.n}})` },
+      { tex: `W = ${labelTex(W.label)} = ${spanTex(W)}\\quad(\\dim ${W.dim} \\text{ in } \\mathbb{R}^{${W.n}})` },
+    ];
+    const title = op === 'perp' ? `Is ${V.label} ⊥ ${W.label}?` : op === 'sub' ? `Is ${V.label} ⊆ ${W.label}?` : `Is ${V.label} = ${W.label}?`;
+    if (V.n !== W.n) {
+      return new Info(title, [...head, { text: `✗ No — they live in different spaces (ℝ${supN(V.n)} vs ℝ${supN(W.n)}), so they can't be ${op === 'perp' ? 'compared for orthogonality' : op === 'sub' ? 'contained in one another' : 'equal'}.` }]);
+    }
+    const n = V.n;
+    if (op === 'perp') {
+      if (!V.basis || !W.basis) return new Info(title, [...head, { text: '✓ Yes — the zero subspace is orthogonal to every subspace.' }]);
+      const G = M.mul(M.transpose(V.basis), W.basis);
+      const blocks = [...head, { text: 'V ⊥ W exactly when every basis vector of V is orthogonal to every basis vector of W, i.e. XᵀY = 0 (X, Y = basis matrices):' },
+        { tex: `X^{\\mathsf T}Y = ${M.latex(G, 0, { factor: false })}` }];
+      const bad = [];
+      G.a.forEach((r, i) => r.forEach((x, j) => { if (!N.isZero(x)) bad.push([i, j, x]); }));
+      if (!bad.length) {
+        blocks.push({ text: '✓ Yes — V ⊥ W.' });
+        blocks.push({ text: V.dim + W.dim === n
+          ? `Moreover dim V + dim W = ${V.dim} + ${W.dim} = ${n}, so they are orthogonal complements: W = V⊥ and V = W⊥.`
+          : `dim V + dim W = ${V.dim + W.dim} < ${n}, so they are orthogonal but not complements (W is a proper subspace of V⊥).` });
+      } else {
+        const [i, j, x] = bad[0];
+        blocks.push({ text: `✗ No — e.g. basis vector ${i + 1} of V and basis vector ${j + 1} of W have dot product ${N.toText(x)} ≠ 0.` });
+      }
+      return new Info(title, blocks);
+    }
+    // equality / containment via ranks: V ⊆ W ⇔ rank[Y | X] = rank Y
+    const rk = (X) => (X ? M.rank(X) : 0);
+    const both = V.basis && W.basis ? M.hcat([W.basis, V.basis]) : V.basis || W.basis;
+    const rBoth = rk(both);
+    const VinW = rBoth === W.dim, WinV = rBoth === V.dim;
+    const blocks = [...head];
+    if (V.basis && W.basis) {
+      const aug = M.hcat([W.basis, V.basis]); aug.aug = V.basis.c;
+      blocks.push({ text: 'Row reduce [Y | X] (W’s basis | V’s basis): V ⊆ W exactly when there is no pivot on the right side.' });
+      blocks.push({ tex: `\\operatorname{rref}${M.latex(aug)} = ${M.latex(M.rref(aug))}` });
+    }
+    blocks.push({ tex: `\\dim V = ${V.dim},\\quad \\dim W = ${W.dim},\\quad \\dim(V + W) = ${rBoth}` });
+    const ex = (S, T) => { // a basis vector of S not in T
+      if (!S.basis) return null;
+      for (let j = 0; j < S.basis.c; j++) {
+        const v = colVec(S.basis.col(j));
+        if (!T.basis || M.solve(T.basis, v).kind === 'none') return v;
+      }
+      return null;
+    };
+    if (op === 'sub') {
+      if (VinW) blocks.push({ text: '✓ Yes — every basis vector of V lies in W, so V ⊆ W.' });
+      else { const v = ex(V, W); blocks.push({ text: '✗ No — this vector is in V but not in W:' }, { tex: M.latex(v) }); }
+      return new Info(title, blocks);
+    }
+    if (VinW && WinV) blocks.push({ text: '✓ Yes — V ⊆ W and W ⊆ V (same dimension and each basis lies in the other), so V = W.' });
+    else {
+      blocks.push({ text: `✗ No — ${V.dim !== W.dim ? `the dimensions differ (${V.dim} ≠ ${W.dim}). ` : ''}${VinW ? 'V ⊆ W, but W is bigger.' : WinV ? 'W ⊆ V, but V is bigger.' : 'Neither contains the other.'}` });
+      const v = VinW ? ex(W, V) : ex(V, W);
+      if (v) blocks.push({ text: VinW ? 'This vector is in W but not in V:' : 'This vector is in V but not in W:' }, { tex: M.latex(v) });
+    }
+    return new Info(title, blocks);
+  }
+
+  // "L = R" for ordinary values: are the matrices / numbers equal?
+  function valueEqInfo(lnode, rnode, ctx) {
+    let a = evaluate(lnode, ctx), b = evaluate(rnode, ctx);
+    if (a instanceof Info) a = a.value; if (b instanceof Info) b = b.value;
+    if (a instanceof Eye && b instanceof Matrix) a = materialize(a, ctx, b.r);
+    if (b instanceof Eye && a instanceof Matrix) b = materialize(b, ctx, a.r);
+    a = materialize(a, ctx); b = materialize(b, ctx);
+    const tex = (v) => (v instanceof Matrix ? M.latex(v) : N.isNum(v) ? N.toLatex(v) : '?');
+    const one = (v) => (v instanceof Matrix && v.r === 1 && v.c === 1 ? v.a[0][0] : v);
+    const x = one(a), y = one(b);
+    let same, why = '';
+    if (N.isNum(x) && N.isNum(y)) same = N.eq(x, y);
+    else if (x instanceof Matrix && y instanceof Matrix) { same = M.equals(x, y); if (x.r !== y.r || x.c !== y.c) why = ` (${x.dims} vs ${y.dims})`; }
+    else { same = false; why = ' (a scalar and a matrix)'; }
+    return new Info(same ? 'Equal ✓' : 'Not equal ✗', [
+      { tex: `${exprText(lnode).replace(/ᵀ/g, '^T')} = ${tex(a)}` },
+      { tex: `${exprText(rnode).replace(/ᵀ/g, '^T')} = ${tex(b)}` },
+      { text: same ? '✓ The two sides are equal.' : `✗ The two sides are different${why}.` },
+      { text: 'Tip: to compare subspaces use Col(A) = Null(B) or Col(A) ⊥ Null(B); for a symbolic proof of an identity use the "Explain an identity" tab.' },
+    ]);
+  }
+
   function aboutInfo(A) {
     const z = N.isZero, one = N.isOne;
     const all = (f) => A.a.every((row, i) => row.every((x, j) => f(x, i, j)));
@@ -1325,8 +1462,39 @@
   }
 
   // Run a statement. ws: {name: value}. Returns {value, assign, steps, notes}.
+  // Find a top-level relation  L = R,  L == R,  L ⊥ R  or  L perp R  (outside brackets / ⟨,⟩).
+  // A plain  name = expr  is an assignment, not a relation.
+  function splitRelation(src) {
+    let depth = 0;
+    for (let i = 0; i < src.length; i++) {
+      const ch = src[i];
+      if ('([{<⟨'.includes(ch)) depth++;
+      else if (')]}>⟩'.includes(ch)) depth--;
+      else if (depth === 0) {
+        let op = null, len = 1;
+        if (ch === '⊥') op = 'perp';
+        else if (ch === '=') { op = 'eq'; if (src[i + 1] === '=') len = 2; }
+        else if (/^\s(perp|⟂)\s/.test(src.slice(i - 1 < 0 ? 0 : i - 1, i + 6)) && /^(perp|⟂)\b/.test(src.slice(i))) { op = 'perp'; len = src[i] === '⟂' ? 1 : 4; }
+        else if (ch === '⟂') op = 'perp';
+        if (op) {
+          const L = src.slice(0, i).trim(), Rr = src.slice(i + len).trim();
+          if (op === 'eq' && len === 1 && /^[A-Za-z\u0370-\u03ff][\w\u0370-\u03ff]*$/.test(L)) return null; // assignment
+          if (!L || !Rr) return null;
+          return { op, L, R: Rr };
+        }
+      }
+    }
+    return null;
+  }
+
   function run(src, ws, settings, { wantSteps = true } = {}) {
     const ctx = makeCtx(ws, settings, wantSteps);
+    const rel = splitRelation(src);
+    if (rel) {
+      const la = parse(rel.L, { known: ctx.has }), ra = parse(rel.R, { known: ctx.has });
+      const value = relationInfo(rel.op, la, ra, ctx);
+      return { value, assign: null, steps: ctx.steps, notes: [...new Set(ctx.notes)], ast: null };
+    }
     const ast = parse(src, { known: ctx.has });
     let target = null, expr = ast;
     if (ast.type === 'assign') {
