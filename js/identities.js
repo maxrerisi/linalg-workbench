@@ -54,12 +54,32 @@
     sortTerms: { name: 'Addition is commutative', tex: 'X + Y = Y + X' },
     compute: { name: 'Compute with explicit numbers', tex: '' },
     arith: { name: 'Arithmetic', tex: '' },
+    // complex mode (ℂⁿ): the slides' paradigm "replace ᵀ by *"
+    ipDefC: { name: 'Definition of the inner product on ℂⁿ', tex: `\\langle x, y\\rangle = x^{*}y` },
+    frobC: { name: 'Frobenius inner product', tex: `\\langle X, Y\\rangle = \\operatorname{tr}(X^{*}Y)` },
+    ipScalarC: { name: 'Inner product of scalars', tex: '\\langle a, b\\rangle = \\overline{a}\\,b' },
+    gramC: { name: 'Gram matrix', tex: '\\operatorname{gram}(A) = A^{*}A' },
+    hh: { name: 'Double conjugate transpose', tex: '(X^{*})^{*} = X' },
+    hProd: { name: 'Conjugate transpose of a product (reverses order)', tex: '(XY)^{*} = Y^{*}X^{*}' },
+    hScal: { name: 'Scalars come out of * conjugated', tex: '(cX)^{*} = \\overline{c}\\,X^{*}' },
+    hSum: { name: 'Conjugate transpose of a sum', tex: '(X+Y)^{*} = X^{*}+Y^{*}' },
+    hInv: { name: 'Conjugate transpose and inverse commute', tex: '(X^{-1})^{*} = (X^{*})^{-1}' },
+    hPow: { name: 'Conjugate transpose of a power', tex: '(X^k)^{*} = (X^{*})^k' },
+    hI: { name: 'Identity is Hermitian', tex: 'I^{*} = I' },
+    hScalar: { name: 'The conjugate transpose of a scalar is its conjugate', tex: 'c^{*} = \\overline{c}' },
+    tH: { name: 'Transpose and conjugate transpose commute', tex: `(X^{*})${T_} = (X${T_})^{*}` },
+    conjConj: { name: 'Double conjugate', tex: '\\overline{\\overline{z}} = z' },
+    conjSum: { name: 'Conjugate of a sum', tex: '\\overline{z+w} = \\overline{z}+\\overline{w}' },
+    conjProd: { name: 'Conjugate of a product', tex: '\\overline{zw} = \\overline{z}\\,\\overline{w}' },
+    conj1x1: { name: 'A 1×1 product is a scalar, so its conjugate is its conjugate transpose', tex: '\\overline{x^{*}My} = (x^{*}My)^{*} = y^{*}M^{*}x' },
+    conjNum: { name: 'Conjugate a number', tex: '\\overline{a+bi} = a-bi' },
   };
 
   // ---------- constructors ----------
   const num = (v) => ({ t: 'num', v });
   const ONE = () => num(R.ONE);
   const T = (a) => ({ t: 'T', a });
+  const H = (a) => ({ t: 'H', a });
   const inv = (a) => ({ t: 'inv', a });
   const powN = (a, n) => (n === 1 ? a : { t: 'pow', a, n });
   const fn = (name, args) => ({ t: 'fn', name, args });
@@ -97,6 +117,7 @@
       case 'I': return 'I';
       case 'lit': return 'L[' + n.m.a.map((r) => r.map((x) => N.toText(x, 'frac')).join(',')).join(';') + ']';
       case 'T': return key(n.a) + "'";
+      case 'H': return key(n.a) + '"';
       case 'inv': return key(n.a) + '~';
       case 'pow': return key(n.a) + '^' + n.n;
       case 'mul': return '(' + n.f.map(key).join('*') + ')';
@@ -121,8 +142,8 @@
       switch (n.t) {
         case 'num': case 'ip': return true;
         case 'var': { const d = dims(n.name); return !!(d && d.scalar); }
-        case 'fn': return SCALAR_FNS.has(n.name);
-        case 'T': case 'inv': case 'pow': return isScalar(n.a);
+        case 'fn': return SCALAR_FNS.has(n.name) || (n.name === 'conj' && isScalar(n.args[0]));
+        case 'T': case 'H': case 'inv': case 'pow': return isScalar(n.a);
         case 'mul': return n.f.every(isScalar);
         case 'add': return isScalar(n.ts[0]);
       }
@@ -134,11 +155,12 @@
         case 'var': { const d = dims(n.name); return d ? [d.r, d.c] : null; }
         case 'I': return null;
         case 'lit': return [n.m.r, n.m.c];
-        case 'T': { const s = shape(n.a); return s && [s[1], s[0]]; }
+        case 'T': case 'H': { const s = shape(n.a); return s && [s[1], s[0]]; }
         case 'inv': case 'pow': return shape(n.a);
         case 'fn': {
           if (SCALAR_FNS.has(n.name)) return [1, 1];
           if (n.name === 'gram') { const s = shape(n.args[0]); return s && [s[1], s[1]]; }
+          if (n.name === 'conj') return shape(n.args[0]);
           return null;
         }
         case 'mul': {
@@ -161,9 +183,13 @@
     switch (n.type) {
       case 'num': return num(N.parseLiteral(n.v));
       case 'group': return toSym(n.a, ctx);
-      case 'var': return n.name === 'I' ? { t: 'I' } : { t: 'var', name: n.name };
+      case 'var':
+        if (n.name === 'I') return { t: 'I' };
+        if (n.name === 'i' && !(ctx && ctx.has('i'))) return num(N.mkC(R.ZERO, R.ONE));
+        return { t: 'var', name: n.name };
       case 'neg': return mul([num(N.neg(R.ONE)), toSym(n.a, ctx)]);
       case 'T': return T(toSym(n.a, ctx));
+      case 'CT': return H(toSym(n.a, ctx));
       case 'pow': {
         const e = E.evaluate(n.e, E.makeCtx({}, { defaultN: 3 }, false));
         if (!N.isNum(e) || !N.isInt(e)) throw new Unsupported('Only integer exponents are supported symbolically.');
@@ -185,6 +211,8 @@
         switch (n.name) {
           case 'inv': return inv(args[0]);
           case 'transpose': return T(args[0]);
+          case 'ct': case 'ctranspose': case 'star': return H(args[0]);
+          case 'conjugate': return fn('conj', args);
           case 'trace': return fn('tr', args);
           case 'dot': case 'ip': return { t: 'ip', a: args[0], b: args[1] };
           case 'sqrt': throw new Unsupported('sqrt is not supported in symbolic mode.');
@@ -206,7 +234,8 @@
     if (u) return `${u[1]}_{${u[2]}}`;
     return name.length > 1 ? `\\mathit{${name}}` : name;
   }
-  const atomic = (n) => ['var', 'I', 'lit', 'fn', 'ip'].includes(n.t) || (n.t === 'num' && N.sign(n.v) >= 0 && N.isInt(n.v));
+  const atomic = (n) => ['var', 'I', 'lit', 'fn', 'ip'].includes(n.t) || (n.t === 'num' && !N.isC(n.v) && N.sign(n.v) >= 0 && N.isInt(n.v));
+  const cnum = (x) => isNum(x) && N.isC(x.v);
   const wrap = (n) => (atomic(n) ? tex(n) : `\\left(${tex(n)}\\right)`);
   function tex(n) {
     switch (n.t) {
@@ -215,6 +244,7 @@
       case 'I': return 'I';
       case 'lit': return Mx.latex(n.m);
       case 'T': return wrap(n.a) + T_;
+      case 'H': return wrap(n.a) + '^{*}';
       case 'inv': return wrap(n.a) + '^{-1}';
       case 'pow': return wrap(n.a) + `^{${n.n}}`;
       case 'ip': return `\\langle ${tex(n.a)},\\, ${tex(n.b)} \\rangle`;
@@ -223,6 +253,7 @@
         if (n.name === 'det') return `\\det(${a})`;
         if (n.name === 'norm') return `\\lVert ${a} \\rVert`;
         if (n.name === 'abs') return `\\lvert ${a} \\rvert`;
+        if (n.name === 'conj') return `\\overline{${a}}`;
         return `\\operatorname{${n.name}}(${a})`;
       }
       case 'mul': {
@@ -230,7 +261,8 @@
         let pre = '';
         if (isNum(fs[0])) {
           const c = fs.shift().v;
-          if (N.isOne(N.neg(c))) pre = '-';
+          if (N.isC(c)) pre = `\\left(${N.toLatex(c, 'frac')}\\right)`;
+          else if (N.isOne(N.neg(c))) pre = '-';
           else pre = N.sign(c) < 0 ? `-${N.toLatex(N.abs(c), 'frac')}` : N.toLatex(c, 'frac');
         }
         // negative-power scalars go in a denominator
@@ -243,14 +275,15 @@
           const coef = pre.replace(/^-/, '');
           return `${sign}\\frac{${coef}${coef && numer ? '\\,' : ''}${numer || (coef ? '' : '1')}}{${d}}`;
         }
-        const body = fs.map((f) => (f.t === 'add' || (f.t === 'num' && N.sign(f.v) < 0) ? `\\left(${tex(f)}\\right)` : tex(f))).join(' ');
+        const body = fs.map((f) => (f.t === 'add' || (f.t === 'num' && (N.isC(f.v) || N.sign(f.v) < 0)) ? `\\left(${tex(f)}\\right)` : tex(f))).join(' ');
         return pre + (pre && pre !== '-' ? '\\,' : '') + body;
       }
       case 'add': {
         let s = '';
         n.ts.forEach((t, i) => {
           let neg = false, body;
-          if (t.t === 'num' && N.sign(t.v) < 0) { neg = true; body = N.toLatex(N.abs(t.v), 'frac'); }
+          if (cnum(t) || (t.t === 'mul' && cnum(t.f[0]))) body = i && cnum(t) ? `\\left(${tex(t)}\\right)` : tex(t);
+          else if (t.t === 'num' && N.sign(t.v) < 0) { neg = true; body = N.toLatex(N.abs(t.v), 'frac'); }
           else if (t.t === 'mul' && isNum(t.f[0]) && N.sign(t.f[0].v) < 0) { neg = true; body = tex(mul([num(N.abs(t.f[0].v)), ...t.f.slice(1)])); }
           else body = tex(t);
           if (i === 0) s = (neg ? '-' : '') + body;
@@ -265,14 +298,15 @@
   let isScalarGuess = () => false; // set per explanation (depends on dims)
 
   // ---------- rewrite engine ----------
-  function makeRewriter(S) {
+  function makeRewriter(S, cx) {
     const { isScalar, shape } = S;
+    const conjOf = (x) => fn('conj', [x]);
     const split = (fs) => ({ sc: fs.filter(isScalar), ch: fs.filter((f) => !isScalar(f)) });
     const scalarInv = (x) => (isNum(x) ? num(N.inv(x.v)) : x.t === 'pow' ? powN(x.a, -x.n) : powN(x, -1));
 
     function children(n) {
       switch (n.t) {
-        case 'T': case 'inv': case 'pow': return [n.a];
+        case 'T': case 'H': case 'inv': case 'pow': return [n.a];
         case 'ip': return [n.a, n.b];
         case 'fn': return n.args;
         case 'mul': return n.f;
@@ -283,6 +317,7 @@
     function rebuild(n, k, c) {
       switch (n.t) {
         case 'T': return T(c);
+        case 'H': return H(c);
         case 'inv': return inv(c);
         case 'pow': return { t: 'pow', a: c, n: n.n };
         case 'ip': return k === 0 ? { t: 'ip', a: c, b: n.b } : { t: 'ip', a: n.a, b: c };
@@ -318,6 +353,12 @@
     function here(n) {
       switch (n.t) {
         case 'ip': {
+          if (cx) {
+            if (isScalar(n.a) && isScalar(n.b)) return ok(mul([conjOf(n.a), n.b]), RULES.ipScalarC);
+            const s = shape(n.a);
+            if (s && s[1] > 1 && s[0] > 1) return ok(fn('tr', [mul([H(n.a), n.b])]), RULES.frobC);
+            return ok(mul([H(n.a), n.b]), RULES.ipDefC);
+          }
           if (isScalar(n.a) && isScalar(n.b)) return ok(mul([n.a, n.b]), RULES.arith);
           const s = shape(n.a);
           if (s && s[1] > 1 && s[0] > 1) return ok(fn('tr', [mul([T(n.a), n.b])]), RULES.frob);
@@ -328,6 +369,7 @@
           const x = n.a;
           if (x.t === 'T') return ok(x.a, RULES.tt);
           if (isScalar(x)) return ok(x, RULES.tScalar);
+          if (x.t === 'H') return ok(H(T(x.a)), RULES.tH);
           if (x.t === 'mul') {
             const { sc, ch } = split(x.f);
             return ok(mul([...sc, ...ch.slice().reverse().map(T)]), ch.length >= 2 ? RULES.tProd : RULES.tScal);
@@ -337,6 +379,22 @@
           if (x.t === 'pow') return ok(powN(T(x.a), x.n), RULES.tPow);
           if (x.t === 'I') return ok(x, RULES.tI);
           if (x.t === 'lit') return ok({ t: 'lit', m: Mx.transpose(x.m) }, RULES.compute);
+          return null;
+        }
+        case 'H': {
+          const x = n.a;
+          if (x.t === 'H') return ok(x.a, RULES.hh);
+          if (isNum(x)) return ok(num(N.conj(x.v)), RULES.conjNum);
+          if (isScalar(x)) return ok(conjOf(x), RULES.hScalar);
+          if (x.t === 'mul') {
+            const { sc, ch } = split(x.f);
+            return ok(mul([...sc.map(conjOf), ...ch.slice().reverse().map(H)]), ch.length >= 2 ? RULES.hProd : RULES.hScal);
+          }
+          if (x.t === 'add') return ok(add(x.ts.map(H)), RULES.hSum);
+          if (x.t === 'inv') return ok(inv(H(x.a)), RULES.hInv);
+          if (x.t === 'pow') return ok(powN(H(x.a), x.n), RULES.hPow);
+          if (x.t === 'I') return ok(x, RULES.hI);
+          if (x.t === 'lit') return ok({ t: 'lit', m: Mx.ctranspose(x.m) }, RULES.compute);
           return null;
         }
         case 'inv': {
@@ -376,9 +434,27 @@
       return null;
     }
 
+    function conjRule(x) {
+      if (isNum(x)) return ok(num(N.conj(x.v)), RULES.conjNum);
+      if (x.t === 'fn' && x.name === 'conj') return ok(x.args[0], RULES.conjConj);
+      const s = shape(x);
+      if (!isScalar(x) && !(s && s[0] === 1 && s[1] === 1)) return null;
+      if (x.t === 'add') return ok(add(x.ts.map(conjOf)), RULES.conjSum);
+      if (x.t === 'ip') return ok(H(mul([H(x.a), x.b])), cx ? RULES.ipDefC : RULES.ipDef);
+      if (x.t === 'mul') {
+        const { sc, ch } = split(x.f);
+        if (ch.length) return ok(H(x), RULES.conj1x1);
+        return ok(mul(sc.map(conjOf)), RULES.conjProd);
+      }
+      if (x.t === 'pow') return ok(powN(conjOf(x.a), x.n), RULES.conjProd);
+      if (x.t === 'fn' && (x.name === 'norm' || x.name === 'abs' || x.name === 'rank')) return ok(x, RULES.arith);
+      return null;
+    }
+
     function fnRule(n) {
       const x = n.args[0];
-      if (n.name === 'gram') return ok(mul([T(x), x]), RULES.gram);
+      if (n.name === 'conj') return conjRule(x);
+      if (n.name === 'gram') return cx ? ok(mul([H(x), x]), RULES.gramC) : ok(mul([T(x), x]), RULES.gram);
       if (n.name === 'det') {
         if (x.t === 'I') return ok(ONE(), RULES.detI);
         if (x.t === 'T') return ok(fn('det', [x.a]), RULES.detT);
@@ -473,7 +549,7 @@
       // a 1×1 chain equals its transpose: pick the canonical orientation
       if (ch.length >= 2) {
         const s = shape(mul(ch));
-        if (s && s[0] === 1 && s[1] === 1) {
+        if (s && s[0] === 1 && s[1] === 1 && !ch.some((f) => f.t === 'H')) {
           const tr = ch.slice().reverse().map(tpush);
           if (key(mul(tr)) < key(mul(ch))) return ok(mul([...coef, ...scNew, ...tr]), RULES.scalarT);
         }
@@ -537,20 +613,43 @@
     return 'vector';
   }
 
-  function collectVars(ast, out = new Set()) {
+  function collectVars(ast, out = new Set(), skipI = true) {
     if (!ast || typeof ast !== 'object') return out;
-    if (ast.type === 'var' && ast.name !== 'I' && ast.name !== 'pi' && !/^I\d+$/.test(ast.name)) out.add(ast.name);
+    if (ast.type === 'var' && !(skipI && ast.name === 'i') && ast.name !== 'I' && ast.name !== 'pi' && !/^I\d+$/.test(ast.name)) out.add(ast.name);
     if (ast.type === 'index') out.add(ast.name);
-    for (const k of ['a', 'b', 'l', 'r', 'e', 'lhs', 'rhs']) if (ast[k]) collectVars(ast[k], out);
-    if (ast.args) ast.args.forEach((x) => collectVars(x, out));
-    if (ast.rows) ast.rows.forEach((row) => row.forEach((x) => collectVars(x, out)));
+    for (const k of ['a', 'b', 'l', 'r', 'e', 'lhs', 'rhs']) if (ast[k]) collectVars(ast[k], out, skipI);
+    if (ast.args) ast.args.forEach((x) => collectVars(x, out, skipI));
+    if (ast.rows) ast.rows.forEach((row) => row.forEach((x) => collectVars(x, out, skipI)));
     return out;
   }
 
+  // Complex mode: a saved complex value, the imaginary unit i, A^* or conj(…) anywhere.
+  const COMPLEX_FNS = new Set(['conj', 'conjugate', 'ct', 'ctranspose', 'star', 're', 'im', 'Re', 'Im', 'real', 'imag', 'ishermitian', 'isunitary']);
+  function usesComplex(ast, ws) {
+    let found = false;
+    (function walk(a) {
+      if (found || !a || typeof a !== 'object') return;
+      if (a.type === 'CT' || (a.type === 'call' && COMPLEX_FNS.has(a.name))) { found = true; return; }
+      if (a.type === 'var' && a.name === 'i' && ws.i === undefined) { found = true; return; }
+      if (a.type === 'num' && /i$/.test(String(a.v))) { found = true; return; }
+      for (const k of ['a', 'b', 'l', 'r', 'e', 'lhs', 'rhs']) walk(a[k]);
+      if (a.args) a.args.forEach(walk);
+      if (a.rows) a.rows.forEach((row) => row.forEach(walk));
+    })(ast);
+    if (found) return true;
+    for (const v of collectVars(ast, new Set(), false)) {
+      const w = ws[v];
+      if (w instanceof LA.Matrix ? !Mx.isRealM(w) : w !== undefined && N.isC(w)) return true;
+    }
+    return false;
+  }
+
   // ---------- numeric verification ----------
-  function randNonSingular(n) {
+  const randC = () => N.mkC(N.randInt(-4, 4), N.randInt(-4, 4));
+  const randM = (r, c, cx) => (cx ? new LA.Matrix(Array.from({ length: r }, () => Array.from({ length: c }, randC))) : Mx.random(r, c, -4, 4));
+  function randNonSingular(n, cx) {
     for (let k = 0; k < 20; k++) {
-      const A = Mx.random(n, n, -4, 4);
+      const A = randM(n, n, cx);
       if (!N.isZero(Mx.det(A))) return A;
     }
     return Mx.identity(n);
@@ -566,7 +665,7 @@
     if (a instanceof LA.Matrix && b instanceof LA.Matrix) return Mx.equals(a, b);
     return false;
   }
-  function numericCheck(lhs, rhs, vars, dimsOf, ws, settings, n) {
+  function numericCheck(lhs, rhs, vars, dimsOf, ws, settings, n, cx) {
     const trials = [];
     let attempts = 0;
     while (trials.length < 4 && attempts < 25) {
@@ -575,9 +674,9 @@
       for (const v of vars) {
         if (ws[v] !== undefined) { env[v] = ws[v]; continue; }
         const d = dimsOf(v);
-        if (d.scalar) { let s; do { s = N.randInt(-5, 5); } while (N.isZero(s)); env[v] = s; }
-        else if (d.c === 1) env[v] = Mx.random(d.r, 1, -4, 4);
-        else env[v] = randNonSingular(d.r);
+        if (d.scalar) { let s; do { s = cx ? randC() : N.randInt(-5, 5); } while (N.isZero(s)); env[v] = s; }
+        else if (d.c === 1) env[v] = randM(d.r, 1, cx);
+        else env[v] = randNonSingular(d.r, cx);
       }
       const ctx = E.makeCtx(env, { ...settings, defaultN: n }, false);
       let L, Rv;
@@ -602,7 +701,8 @@
     const has = (k) => Object.prototype.hasOwnProperty.call(ws, k);
     const isEq = /(^|[^<>])=/.test(src);
     const ast = E.parse(isEq ? src : `${src} = ${src}`, { equation: true, loose: true, known: has });
-    const vars = [...collectVars(ast)];
+    const vars = [...collectVars(ast, new Set(), !has('i'))];
+    const cx = usesComplex(ast, ws);
     // dimensions: workspace values win; otherwise by naming convention with size n (or inferred)
     let nn = n;
     for (const v of vars) if (ws[v] instanceof LA.Matrix) { nn = ws[v].r; break; }
@@ -619,11 +719,11 @@
     const dimsOf = (v) => dims[v];
     const S = makeShape(dimsOf);
     isScalarGuess = S.isScalar;
-    const rw = makeRewriter(S);
+    const rw = makeRewriter(S, cx);
 
-    const out = { vars, dims, n: nn, isEq };
+    const out = { vars, dims, n: nn, isEq, complex: cx };
     try {
-      const L = toSym(ast.lhs), Rr = toSym(ast.rhs);
+      const L = toSym(ast.lhs, { has }), Rr = toSym(ast.rhs, { has });
       const nl = rw.normalize(L);
       out.left = nl;
       if (isEq) {
@@ -631,7 +731,7 @@
         out.right = nr;
         out.proved = key(nl.final) === key(nr.final);
         out.lines = buildLines(nl, nr, out.proved);
-        if (!out.proved) out.hint = hintFor(nl.final, nr.final);
+        if (!out.proved) out.hint = hintFor(nl.final, nr.final, cx);
       } else {
         out.lines = nl.chain.map((c, i) => ({ tex: (i ? '= ' : '') + tex(c.n), rule: c.rule }));
       }
@@ -639,7 +739,7 @@
       out.symError = e.message;
     }
     out.texOf = tex;
-    if (isEq) out.numeric = numericCheck(ast.lhs, ast.rhs, vars, dimsOf, ws, settings, nn);
+    if (isEq) out.numeric = numericCheck(ast.lhs, ast.rhs, vars, dimsOf, ws, settings, nn, cx);
     else if (vars.every((v) => ws[v] !== undefined)) {
       try { out.value = E.evaluate(ast.lhs, E.makeCtx(ws, settings, false)); } catch (e) { /* ignore */ }
     }
@@ -659,7 +759,7 @@
     return out.map((l, i) => ({ ...l, tex: (i ? '= ' : '') + l.tex }));
   }
 
-  function hintFor(a, b) {
+  function hintFor(a, b, cx) {
     const terms = (x) => (x.t === 'add' ? x.ts : [x]);
     const factors = (t) => (t.t === 'mul' ? t.f.filter((f) => !isNum(f)) : [t]);
     const coefOf = (t) => (t.t === 'mul' && isNum(t.f[0]) ? t.f[0].v : isNum(t) ? t.v : R.ONE);
@@ -677,14 +777,17 @@
     const stripGram = (t) => {
       const f = factors(t);
       for (let i = 0; i + 1 < f.length; i++) {
-        if (f[i].t === 'T' && key(f[i].a) === key(f[i + 1])) return { name: tex(f[i + 1]), rest: mul([...(t.t === 'mul' && isNum(t.f[0]) ? [t.f[0]] : []), ...f.slice(0, i), ...f.slice(i + 2)]) };
+        if ((f[i].t === 'T' || f[i].t === 'H') && key(f[i].a) === key(f[i + 1])) return { name: tex(f[i + 1]), rest: mul([...(t.t === 'mul' && isNum(t.f[0]) ? [t.f[0]] : []), ...f.slice(0, i), ...f.slice(i + 2)]) };
       }
       return null;
     };
     if (terms(a).length === 1 && terms(b).length === 1) {
       for (const [x, y] of [[a, b], [b, a]]) {
         const g = stripGram(x);
-        if (g && key(g.rest) === key(y)) return `The sides differ by a factor ${g.name}^{\\mathsf T}${g.name}. This holds exactly when ${g.name}^{\\mathsf T}${g.name} = I, i.e. when ${g.name} is orthogonal.`;
+        if (g && key(g.rest) === key(y)) {
+          const s = cx ? '^{*}' : '^{\\mathsf T}';
+          return `The sides differ by a factor ${g.name}${s}${g.name}. This holds exactly when ${g.name}${s}${g.name} = I, i.e. when ${g.name} is ${cx ? 'unitary' : 'orthogonal'}.`;
+        }
       }
     }
     return null;
@@ -706,6 +809,10 @@
     { eq: '(A + B)^2 = A^2 + 2A B + B^2', note: 'Usually FALSE — try it and see why' },
     { eq: '(A B)^T = A^T B^T', note: 'A classic mistake' },
     { eq: '<A v, A w> = <v, w>', note: 'True only for orthogonal A' },
+    { eq: '<v, A w> = <A^* v, w>', note: 'Over ℂ the adjoint is A* (the slides: replace ᵀ by *)' },
+    { eq: '<c v, w> = conj(c) <v, w>', note: 'Over ℂ, scalars leave the first slot conjugated' },
+    { eq: '<w, v> = conj(<v, w>)', note: 'Conjugate symmetry of the complex inner product' },
+    { eq: '(c A)^* = conj(c) A^*', note: 'Conjugate transpose of a scalar multiple' },
     { eq: '(A + B)^2', note: 'No "=": just expand/simplify' },
   ];
 

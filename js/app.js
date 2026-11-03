@@ -528,7 +528,7 @@
     const chips = el('div', { class: 'assume' });
     for (const v of r.vars) {
       const d = r.dims[v];
-      const txt = d.scalar ? `${v} scalar` : d.c === 1 ? `${v} ∈ ℝ${sup(d.r)}` : `${v}: ${d.r}×${d.c}`;
+      const txt = d.scalar ? `${v} scalar` : d.c === 1 ? `${v} ∈ ${r.complex ? 'ℂ' : 'ℝ'}${sup(d.r)}` : `${v}: ${d.r}×${d.c}`;
       chips.append(el('span', { title: d.from === 'ws' ? 'From your workspace' : 'By naming convention' }, txt + (d.from === 'ws' ? ' (saved)' : '')));
     }
 
@@ -542,6 +542,7 @@
     else { cls = 'warn'; icon = '?'; msg = num && num.message ? `Couldn't check numerically: ${num.message}` : "Couldn't decide."; }
     panel.append(el('div', { class: `verdict ${cls}` }, el('span', { class: 'icon' }, icon), el('span', {}, msg)));
     panel.append(chips);
+    if (r.complex) panel.append(el('p', { class: 'small muted' }, 'Complex mode: ⟨x, y⟩ = x*y (conjugate-linear in the first slot), adjoints use A*, and the random tests use complex entries.'));
     if (r.symError) panel.append(el('p', { class: 'small muted' }, `Symbolic mode: ${r.symError}`));
 
     const proofTable = (lines, labelFirst) => {
