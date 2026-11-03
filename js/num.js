@@ -1,4 +1,5 @@
-// Scalars: exact rationals (R, BigInt-backed), exact square-root forms (Surd), or JS floats.
+// Scalars: exact rationals (R, BigInt-backed), exact square-root forms (Surd), exact complex
+// numbers a + bi with rational a, b (C), or JS floats.
 // Arithmetic stays exact whenever both operands are exact; otherwise falls back to floats.
 (function () {
   const LA = (window.LA = window.LA || {});
@@ -34,9 +35,23 @@
   class MathError extends Error {}
   LA.MathError = MathError;
 
+  // Complex number re + im·i with exact rational parts (im ≠ 0; otherwise it is just an R).
+  class C {
+    constructor(re, im) { this.re = re; this.im = im; }
+    toFloat() { throw new MathError('This needs a real number, but got a complex one.'); }
+  }
+
   const isR = (x) => x instanceof R;
   const isSurd = (x) => x instanceof Surd;
-  const isNum = (x) => isR(x) || isSurd(x) || typeof x === 'number';
+  const isC = (x) => x instanceof C;
+  const isNum = (x) => isR(x) || isSurd(x) || isC(x) || typeof x === 'number';
+  const mkC = (re, im) => (im.n === 0n ? re : new C(re, im));
+  // Real and imaginary parts of an exact scalar (complex arithmetic is only done exactly)
+  function parts(a) {
+    if (isC(a)) return [a.re, a.im];
+    if (isR(a)) return [a, R.ZERO];
+    throw new MathError('Complex numbers can only be combined with exact numbers (no square roots or decimals).');
+  }
   const toF = (x) => (typeof x === 'number' ? x : x.toFloat());
   const EPS = 1e-10;
 
@@ -72,6 +87,12 @@
 
   function add(a, b) {
     if (isR(a) && isR(b)) return new R(a.n * b.d + b.n * a.d, a.d * b.d);
+    if (isC(a) || isC(b)) {
+      if (isZero(a)) return b;
+      if (isZero(b)) return a;
+      const [ar, ai] = parts(a), [br, bi] = parts(b);
+      return mkC(add(ar, br), add(ai, bi));
+    }
     if (isSurd(a) && isSurd(b) && a.r === b.r) return mkSurd(add(a.c, b.c), a.r);
     if (isZero(a)) return b;
     if (isZero(b)) return a;
@@ -80,11 +101,17 @@
   function neg(a) {
     if (isR(a)) return new R(-a.n, a.d);
     if (isSurd(a)) return new Surd(neg(a.c), a.r);
+    if (isC(a)) return new C(neg(a.re), neg(a.im));
     return -a;
   }
   function sub(a, b) { return add(a, neg(b)); }
   function mul(a, b) {
     if (isR(a) && isR(b)) return new R(a.n * b.n, a.d * b.d);
+    if (isC(a) || isC(b)) {
+      if (isZero(a) || isZero(b)) return R.ZERO;
+      const [ar, ai] = parts(a), [br, bi] = parts(b);
+      return mkC(sub(mul(ar, br), mul(ai, bi)), add(mul(ar, bi), mul(ai, br)));
+    }
     if (isR(a) && isSurd(b)) return mkSurd(mul(a, b.c), b.r);
     if (isSurd(a) && isR(b)) return mkSurd(mul(a.c, b), a.r);
     if (isSurd(a) && isSurd(b)) return mul(mul(a.c, b.c), sqrt(new R(a.r * b.r)));
@@ -95,28 +122,42 @@
     if (isZero(a)) throw new MathError('Division by zero');
     if (isR(a)) return new R(a.d, a.n);
     if (isSurd(a)) return mkSurd(inv(mul(a.c, new R(a.r))), a.r); // 1/(c√r) = √r/(c r)
+    if (isC(a)) { const d = add(mul(a.re, a.re), mul(a.im, a.im)); return mkC(div(a.re, d), neg(div(a.im, d))); } // 1/z = z̄/|z|²
     return 1 / a;
   }
   function div(a, b) { return mul(a, inv(b)); }
   function isZero(a) {
     if (isR(a)) return a.n === 0n;
     if (isSurd(a)) return a.c.n === 0n;
+    if (isC(a)) return a.re.n === 0n && a.im.n === 0n;
     return Math.abs(a) < EPS;
   }
-  function isOne(a) { return isR(a) ? a.n === 1n && a.d === 1n : Math.abs(toF(a) - 1) < EPS; }
-  function isExact(a) { return isR(a) || isSurd(a); }
+  function isOne(a) { return isR(a) ? a.n === 1n && a.d === 1n : isC(a) ? false : Math.abs(toF(a) - 1) < EPS; }
+  function isExact(a) { return isR(a) || isSurd(a) || isC(a); }
+  // For complex numbers this is the *display* sign (of the real part, or of the imaginary part when
+  // purely imaginary) so that "x − (2+3i)" style formatting works; abs() is the matching display
+  // absolute value. Use modulus() for |z|.
   function sign(a) {
     if (isR(a)) return a.n > 0n ? 1 : a.n < 0n ? -1 : 0;
+    if (isC(a)) return a.re.n !== 0n ? sign(a.re) : sign(a.im);
     const f = toF(a);
     return Math.abs(f) < EPS ? 0 : f > 0 ? 1 : -1;
   }
   function eq(a, b, tol = 1e-9) {
     if (isR(a) && isR(b)) return a.n === b.n && a.d === b.d;
+    if (isC(a) || isC(b)) {
+      try { const [ar, ai] = parts(a), [br, bi] = parts(b); return eq(ar, br) && eq(ai, bi); } catch (e) { return false; }
+    }
     const x = toF(a), y = toF(b);
     return Math.abs(x - y) <= tol * Math.max(1, Math.abs(x), Math.abs(y));
   }
   function cmp(a, b) { const s = sign(sub(a, b)); return s; }
   function abs(a) { return sign(a) < 0 ? neg(a) : a; }
+  function conj(a) { return isC(a) ? new C(a.re, neg(a.im)) : a; }
+  function re(a) { return isC(a) ? a.re : a; }
+  function im(a) { return isC(a) ? a.im : R.ZERO; }
+  // |z| = √(z z̄) = √(a² + b²); for real numbers the usual absolute value
+  function modulus(a) { return isC(a) ? sqrt(add(mul(a.re, a.re), mul(a.im, a.im))) : abs(a); }
 
   function mkSurd(c, r) {
     if (r === 1n) return c;
@@ -143,7 +184,13 @@
   }
 
   function sqrt(a) {
-    if (sign(a) < 0) return NaN_ERR('Square root of a negative number');
+    if (isC(a)) return NaN_ERR('Square roots of non-real complex numbers are not supported.');
+    if (sign(a) < 0) {
+      // √(−r) = i√r when √r is rational, e.g. sqrt(-4) = 2i
+      const r = isR(a) ? sqrt(neg(a)) : null;
+      if (isR(r)) return mkC(R.ZERO, r);
+      return NaN_ERR('Square root of a negative number (not an exact complex number here)');
+    }
     if (isR(a)) {
       const nd = a.n * a.d; // sqrt(n/d) = sqrt(n d)/d
       if (nd > 10n ** 24n) return Math.sqrt(a.toFloat());
@@ -168,6 +215,7 @@
   }
   function pow(a, e) {
     if (isR(e) && e.d === 1n && babs(e.n) < 100000n) return powInt(a, Number(e.n));
+    if (isC(a) || isC(e)) throw new MathError('Only integer powers of complex numbers are supported.');
     if (isR(e) && e.d === 2n && e.n === 1n) return sqrt(a);
     const r = Math.pow(toF(a), toF(e));
     if (isNaN(r)) throw new MathError('Result is not a real number');
@@ -193,8 +241,17 @@
     return s;
   }
 
+  // a + bi with no spaces (so it stays one cell/element when pasted), e.g. 2-3i, -i, 1/2+3/4i
+  function complexText(z, fmt) {
+    const re = z.re, im = z.im;
+    const imAbs = abs(im);
+    const imPart = isOne(imAbs) ? 'i' : `${fmt(imAbs)}i`;
+    if (re.n === 0n) return (sign(im) < 0 ? '-' : '') + imPart;
+    return `${fmt(re)}${sign(im) < 0 ? '-' : '+'}${imPart}`;
+  }
   // Plain-text form (always re-parseable by the expression parser)
   function toText(a, mode = displayMode) {
+    if (isC(a)) return complexText(a, (x) => toText(x, mode));
     if (isR(a)) {
       if (mode === 'dec' && a.d !== 1n) return fmtFloat(a.toFloat());
       return a.d === 1n ? a.n.toString() : `${a.n}/${a.d}`;
@@ -212,6 +269,12 @@
   }
 
   function toLatex(a, mode = displayMode) {
+    if (isC(a)) {
+      const im = a.im, imAbs = abs(im);
+      const imPart = isOne(imAbs) ? 'i' : `${toLatex(imAbs, mode)}i`;
+      if (a.re.n === 0n) return (sign(im) < 0 ? '-' : '') + imPart;
+      return `${toLatex(a.re, mode)} ${sign(im) < 0 ? '-' : '+'} ${imPart}`;
+    }
     if (isR(a)) {
       if (mode === 'dec' && a.d !== 1n) return fmtFloat(a.toFloat());
       if (a.d === 1n) return a.n.toString();
@@ -235,19 +298,21 @@
   function serialize(a) {
     if (isR(a)) return { r: [a.n.toString(), a.d.toString()] };
     if (isSurd(a)) return { s: [a.c.n.toString(), a.c.d.toString(), a.r.toString()] };
+    if (isC(a)) return { c: [serialize(a.re), serialize(a.im)] };
     return { f: a };
   }
   function deserialize(o) {
     if (o.r) return new R(BigInt(o.r[0]), BigInt(o.r[1]));
     if (o.s) return new Surd(new R(BigInt(o.s[0]), BigInt(o.s[1])), BigInt(o.s[2]));
+    if (o.c) return mkC(deserialize(o.c[0]), deserialize(o.c[1]));
     return o.f;
   }
 
   function randInt(lo, hi) { return fromInt(lo + Math.floor(Math.random() * (hi - lo + 1))); }
 
   LA.num = {
-    R, Surd, isR, isSurd, isNum, toF, fromInt, fromFloat, parseLiteral,
-    add, sub, mul, div, neg, inv, sqrt, pow, powInt, abs,
+    R, Surd, C, isR, isSurd, isC, isNum, mkC, toF, fromInt, fromFloat, parseLiteral,
+    add, sub, mul, div, neg, inv, sqrt, pow, powInt, abs, conj, re, im, modulus,
     isZero, isOne, isExact, isInt, sign, eq, cmp,
     toText, toLatex, fmtFloat, setMode, getMode, serialize, deserialize, randInt, bgcd,
   };

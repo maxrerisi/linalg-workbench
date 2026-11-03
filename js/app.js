@@ -68,6 +68,7 @@
   }
   function valueText(v, fmt = 'text') {
     const t = (x) => {
+      if (fmt === 'numpy' && N.isC(x)) return `complex(${N.toText(x.re, N.getMode())}, ${N.toText(x.im, N.getMode())})`;
       let s = N.toText(x, N.getMode());
       if (fmt === 'numpy') s = s.replace(/sqrt/g, 'np.sqrt');
       return s;
@@ -255,7 +256,7 @@
   const CHIPS = [
     ['inv', 'inv(|)'], ['det', 'det(|)'], ['ᵀ', '|^T'], ['⁻¹', '|^-1'], ['⟨ , ⟩', '<|, >'], ['rref', 'rref(|)'], ['EA=R', 'elim(|)'], ['rank', 'rank(|)'],
     ['tr', 'tr(|)'], ['eig', 'eig(|)'], ['iseig', 'iseig(|, )'], ['gm', 'gm(|, )'], ['am', 'am(|, )'], ['incol', 'incol(|, )'], ['innull', 'innull(|, )'], ['[ | ]', '[| | ]'], ['about', 'about(|)'], ['solve', 'solve(|, )'], ['null', 'null(|)'], ['col', 'col(|)'], ['gram', 'gram(|)'],
-    ['norm', 'norm(|)'], ['proj', 'proj(|, )'], ['projmat', 'projmat(|)'], ['subspaces', 'subspaces(|)'], ['factor', 'factor(|)'], ['V = W?', 'spaceeq(|, )'], ['V ⊥ W?', 'isperp(|, )'], ['⊥', ' ⊥ |'], ['lsq', 'lsq(|, )'], ['fit', 'fit(|)'], ['isindep', 'isindep(|)'], ['perp', 'perp(|)'], ['gs', 'gs(|)'], ['comp', 'comp(|, )'], ['cross', 'cross(|, )'], ['lu', 'lu(|)'], ['qr', 'qr(|)'], ['I(n)', 'I(|)'],
+    ['norm', 'norm(|)'], ['proj', 'proj(|, )'], ['projmat', 'projmat(|)'], ['subspaces', 'subspaces(|)'], ['factor', 'factor(|)'], ['i', 'i|'], ['conj', 'conj(|)'], ['A*', '|^*'], ['ishermitian', 'ishermitian(|)'], ['isunitary', 'isunitary(|)'], ['V = W?', 'spaceeq(|, )'], ['V ⊥ W?', 'isperp(|, )'], ['⊥', ' ⊥ |'], ['lsq', 'lsq(|, )'], ['fit', 'fit(|)'], ['isindep', 'isindep(|)'], ['perp', 'perp(|)'], ['gs', 'gs(|)'], ['comp', 'comp(|, )'], ['cross', 'cross(|, )'], ['lu', 'lu(|)'], ['qr', 'qr(|)'], ['I(n)', 'I(|)'],
   ];
   for (const [label, tpl] of CHIPS) $('chips').append(el('button', { type: 'button', class: 'chip', onclick: () => insertTemplate(tpl) }, label));
 
@@ -798,6 +799,7 @@
       ['[v w]  [A b]', 'build from blocks: columns side by side, augmented matrices'],
       ['[A | b]  [1 2 | 3; 4 5 | 6]', 'augmented matrix — the bar is kept through rref, steps, saving and copying'],
       ['1/3  -2.5  sqrt(2)', 'cells and entries can be any scalar expression'],
+      ['2+3i  -i  1/2-3/4i', 'complex numbers (type without spaces inside a matrix cell); i is the imaginary unit'],
       ['I  I(4)  I3', 'identity; plain I takes its size from context (A + 3I)'],
       ['zeros(m,n) ones(n) rand(m,n) diag(1,2,3)', 'constructors'],
     ]],
@@ -811,6 +813,7 @@
       ['A + B   A - B   2A', 'sums and scalar multiples'],
       ['A B   A*B   Av', 'products; juxtaposition works when names are saved (Av = A·v)'],
       ['A^T   A\'   A^-1   A^3', 'transpose, inverse, powers'],
+      ['A^*   A^H   A†   ct(A)', 'conjugate transpose A* (same as Aᵀ for real matrices)'],
       ['<u, v>   dot(u, v)', 'inner product (weighted one set in ⚙ is used by <,>)'],
       ['||v||   |A|', 'norm, determinant'],
     ]],

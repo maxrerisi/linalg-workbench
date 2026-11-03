@@ -18,7 +18,7 @@
     // normalize unicode conveniences
     src = src
       .replace(/[−–]/g, '-').replace(/[×·⋅]/g, '*').replace(/÷/g, '/')
-      .replace(/⁻¹/g, '^-1').replace(/²/g, '^2').replace(/³/g, '^3').replace(/ᵀ/g, "'")
+      .replace(/⁻¹/g, '^-1').replace(/²/g, '^2').replace(/³/g, '^3').replace(/ᵀ/g, "'").replace(/[†ᴴ]/g, '^*')
       .replace(/⟨/g, '<').replace(/⟩/g, '>');
     const toks = [];
     let i = 0, sp = false;
@@ -92,7 +92,7 @@
       return startsPrimary(t);
     };
     const okPiece = (s) =>
-      known(s) || s === 'I' || /^I\d+$/.test(s) || (opts.loose && (/^[A-Za-z]\d*$/.test(s) || GREEK.includes(s)));
+      known(s) || s === 'I' || s === 'i' || /^I\d+$/.test(s) || (opts.loose && (/^[A-Za-z]\d*$/.test(s) || GREEK.includes(s)));
 
     function parseExpr() { return parseAdd(); }
     function parseAdd() {
@@ -126,7 +126,8 @@
       while (isOp(peek(), '^')) {
         next();
         const t = peek();
-        if (t && t.t === 'id' && (t.v === 'T' || t.v === 'H') && !isOp(peek(1), '(')) { next(); base = { type: 'T', a: base }; continue; }
+        if (t && t.t === 'id' && t.v === 'T' && !isOp(peek(1), '(')) { next(); base = { type: 'T', a: base }; continue; }
+        if ((t && t.t === 'id' && t.v === 'H' && !isOp(peek(1), '(')) || isOp(t, '*')) { next(); base = { type: 'CT', a: base }; continue; }
         if (t && t.t === 'id' && /^T[A-Za-z]/.test(t.v) && !known(t.v)) {
           // "A^Tv" → A^T v
           next();
@@ -368,6 +369,12 @@
     if (k === -1) return vInv(a, ctx);
     return M.pow(a, k);
   }
+  function vCT(a, ctx) {
+    if (a instanceof Info && a.value) a = a.value;
+    if (N.isNum(a)) return N.conj(a);
+    if (a instanceof Eye) return new Eye(N.conj(a.s));
+    return M.ctranspose(a);
+  }
   function vT(a, ctx) {
     if (a instanceof Info && a.value) a = a.value;
     if (N.isNum(a) || a instanceof Eye) return a;
@@ -375,7 +382,7 @@
   }
 
   function innerProduct(a, b, ctx, weighted = true) {
-    if (N.isNum(a) && N.isNum(b)) return N.mul(a, b);
+    if (N.isNum(a) && N.isNum(b)) return N.mul(N.conj(a), b);
     const A = asMatrix(a, ctx), B = asMatrix(b, ctx);
     if (A.isVector && B.isVector) {
       const u = asVec(A, ctx), v = asVec(B, ctx);
@@ -385,14 +392,14 @@
         const W = ctx.get(wName);
         if (!isMat(W) || W.r !== u.length || W.c !== u.length)
           throw new MathError(`The weighted inner product uses ${wName}, which must be ${u.length}×${u.length}.`);
-        return M.mul(M.transpose(colVec(u)), M.mul(W, colVec(v))).a[0][0];
+        return M.mul(M.ctranspose(colVec(u)), M.mul(W, colVec(v))).a[0][0];
       }
       return M.dotCols(u, v);
     }
     if (A.r === B.r && A.c === B.c) {
       let s = R.ZERO;
-      A.a.forEach((row, i) => row.forEach((x, j) => { s = N.add(s, N.mul(x, B.a[i][j])); }));
-      ctx.notes.push('Matrices: using the Frobenius inner product ⟨A, B⟩ = tr(AᵀB).');
+      A.a.forEach((row, i) => row.forEach((x, j) => { s = N.add(s, N.mul(N.conj(x), B.a[i][j])); }));
+      ctx.notes.push('Matrices: using the Frobenius inner product ⟨A, B⟩ = tr(A*B) (= tr(AᵀB) for real matrices).');
       return s;
     }
     throw new MathError(`Can't take the inner product of a ${A.dims} and a ${B.dims}.`);
@@ -406,6 +413,7 @@
       case 'var': return lookup(node.name, ctx, node);
       case 'neg': return vNeg(evaluate(node.a, ctx));
       case 'T': return vT(evaluate(node.a, ctx), ctx);
+      case 'CT': return vCT(evaluate(node.a, ctx), ctx);
       case 'pow': return vPow(evaluate(node.a, ctx), evaluate(node.e, ctx), ctx);
       case 'ip': return innerProduct(evaluate(node.a, ctx), evaluate(node.b, ctx), ctx);
       case 'bin': {
@@ -479,6 +487,7 @@
     let m;
     if ((m = /^I(\d+)$/.exec(name))) return M.identity(+m[1]);
     if (name === 'pi') return Math.PI;
+    if (name === 'i') return N.mkC(R.ZERO, R.ONE);
     if (name === 'ans') throw new MathError('No previous answer yet.');
     throw new MathError(`Unknown name "${name}". Define it first, e.g. ${name} = [1 2; 3 4], or build it in the matrix editor and press Save.`);
   }
@@ -542,7 +551,7 @@
   }, 'is b in Col(A)? (row reduce [A | b])');
   def('inrow', 'inrow(A, v)', 2, 2, ([a, b], ctx, node) => {
     const A = asMatrix(a, ctx);
-    return membershipInfo(M.transpose(A), colVec(asVec(b, ctx)), 'row', stepsFor(ctx, `Row reducing [${labelOf(node, 0)}ᵀ | ${labelOf(node, 1)}]`));
+    return membershipInfo(M.ctranspose(A), colVec(asVec(b, ctx)), 'row', stepsFor(ctx, `Row reducing [${labelOf(node, 0)}ᵀ | ${labelOf(node, 1)}]`));
   }, 'is v in Row(A)? (same as v ∈ Col(Aᵀ))');
   def('inspan', 'inspan(b, v1, v2, …)', 2, 12, (args, ctx) => {
     const vs = args.slice(1).map((x) => asVec(x, ctx));
@@ -600,7 +609,7 @@
   def('Col', 'Col(A)', 1, 1, (args, ctx, node) => FUNCS.col.fn(args, ctx, node), 'column space (same as col)');
   def('Row', 'Row(A)', 1, 1, (args, ctx, node) => FUNCS.row.fn(args, ctx, node), 'row space (same as row)');
   def('Null', 'Null(A)', 1, 1, (args, ctx, node) => FUNCS.null.fn(args, ctx, node), 'null space (same as null)');
-  def('lnull LNull', 'lnull(A)', 1, 1, ([a], ctx, node) => FUNCS.null.fn([M.transpose(asMatrix(a, ctx))], ctx, node), 'left null space Null(Aᵀ)');
+  def('lnull LNull', 'lnull(A)', 1, 1, ([a], ctx, node) => FUNCS.null.fn([M.ctranspose(asMatrix(a, ctx))], ctx, node), 'left null space Null(Aᵀ)');
   def('span Span', 'span(v1, v2, …)', 1, 12, (args, ctx) => {
     const X = colsArg(args, ctx);
     const { pivots } = M.eliminate(X, { reduced: false });
@@ -610,15 +619,36 @@
   def('spaceeq sameSpace', 'spaceeq(V, W)', 2, 2, (args, ctx, node) => relationInfo('eq', node.args[0], node.args[1], ctx, true), 'are two subspaces equal? e.g. spaceeq(Col(A), Null(B))');
   def('isperp', 'isperp(V, W)', 2, 2, (args, ctx, node) => relationInfo('perp', node.args[0], node.args[1], ctx, true), 'are two subspaces orthogonal? e.g. isperp(Col(A), Null(B))');
   def('issub', 'issub(V, W)', 2, 2, (args, ctx, node) => relationInfo('sub', node.args[0], node.args[1], ctx, true), 'is V contained in W?');
+  def('conj conjugate', 'conj(z)', 1, 1, ([a], ctx) => {
+    if (N.isNum(a)) return N.conj(a);
+    return asMatrix(a, ctx).map((x) => N.conj(x));
+  }, 'complex conjugate (entrywise for vectors/matrices)');
+  def('re Re real', 're(z)', 1, 1, ([a], ctx) => (N.isNum(a) ? N.re(a) : asMatrix(a, ctx).map((x) => N.re(x))), 'real part');
+  def('im Im imag', 'im(z)', 1, 1, ([a], ctx) => (N.isNum(a) ? N.im(a) : asMatrix(a, ctx).map((x) => N.im(x))), 'imaginary part');
+  def('ct ctranspose star', 'ct(A)', 1, 1, ([a], ctx) => vCT(a, ctx), 'conjugate transpose A* (also A^*, A^H, A†)');
+  def('ishermitian', 'ishermitian(A)', 1, 1, ([a], ctx) => {
+    const A = asMatrix(a, ctx), As = M.ctranspose(A), yes = M.isHermitian(A);
+    return new Info('Hermitian?', [{ tex: `A^{*} = ${M.latex(As)}` }, { text: yes ? '✓ Yes — A* = A, so A is Hermitian (its eigenvalues are real).' : '✗ No — A* ≠ A.' }]);
+  }, 'is A* = A?');
+  def('isunitary', 'isunitary(U)', 1, 1, ([a], ctx) => {
+    const U = asMatrix(a, ctx);
+    if (!U.isSquare) throw new MathError('Unitary matrices are square.');
+    const G = M.mul(M.ctranspose(U), U), yes = M.equals(G, M.identity(U.r));
+    return new Info('Unitary?', [{ tex: `U^{*}U = ${M.latex(G)}` }, { text: yes ? '✓ Yes — U*U = I, so U* = U⁻¹ (U is unitary).' : '✗ No — U*U ≠ I.' }]);
+  }, 'is U*U = I?');
+  def('isreal', 'isreal(z)', 1, 1, ([a], ctx) => {
+    const yes = N.isNum(a) ? !N.isC(a) : M.isRealM(asMatrix(a, ctx));
+    return new Info('Real?', [{ text: yes ? '✓ Yes — it equals its own conjugate (z̄ = z), so it is real.' : '✗ No — z̄ ≠ z, so it has a nonzero imaginary part.' }]);
+  }, 'test z̄ = z');
   def('transpose', 'transpose(A)', 1, 1, ([a], ctx) => vT(a, ctx), 'transpose');
-  def('gram', 'gram(A)', 1, 1, ([a], ctx) => { const A = asMatrix(a, ctx); ctx.notes.push('Gram matrix G = AᵀA: entry (i, j) is ⟨aᵢ, aⱼ⟩ for columns aᵢ of A.'); return M.mul(M.transpose(A), A); }, 'Gram matrix AᵀA');
+  def('gram', 'gram(A)', 1, 1, ([a], ctx) => { const A = asMatrix(a, ctx); ctx.notes.push('Gram matrix G = A*A (= AᵀA when A is real): entry (i, j) is ⟨aᵢ, aⱼ⟩ for columns aᵢ of A.'); return M.mul(M.ctranspose(A), A); }, 'Gram matrix A*A (AᵀA for real A)');
   def('norm', 'norm(v)', 1, 1, ([a], ctx) => {
-    if (N.isNum(a)) return N.abs(a);
+    if (N.isNum(a)) return N.modulus(a);
     const A = asMatrix(a, ctx);
     return N.sqrt(innerProduct(A, A, ctx));
   }, 'length ‖v‖ = √⟨v, v⟩');
   def('abs', 'abs(x)', 1, 1, ([a], ctx) => {
-    if (N.isNum(a)) return N.abs(a);
+    if (N.isNum(a)) return N.modulus(a);
     const A = asMatrix(a, ctx);
     if (A.r === 1 && A.c === 1) return N.abs(A.a[0][0]);
     if (A.isSquare) { ctx.notes.push('|A| of a square matrix is read as det(A).'); return M.det(A); }
@@ -659,14 +689,15 @@
       const uu = innerProduct(u, u, ctx);
       if (N.isZero(uu)) throw new MathError("Can't project onto the zero vector.");
       ctx.notes.push('proj_u(v) = (⟨v, u⟩ / ⟨u, u⟩) u');
-      return M.scale(N.div(innerProduct(v, u, ctx), uu), u);
+      return M.scale(N.div(innerProduct(u, v, ctx), uu), u);
     }
     const B = colsMatrix(M.colspace(U));
     ctx.notes.push('Projection onto Col(U): B(BᵀB)⁻¹Bᵀv, where B is a basis of the column space.');
-    const Bt = M.transpose(B);
+    const Bt = M.ctranspose(B);
     return M.mul(B, M.mul(M.inverse(M.mul(Bt, B)), M.mul(Bt, v)));
   }, 'projection of v onto u (or onto Col(U))');
   def('angle', 'angle(u, v)', 2, 2, ([a, b], ctx) => {
+    if ([a, b].some((x) => (N.isNum(x) ? N.isC(x) : !M.isRealM(asMatrix(x, ctx))))) throw new MathError('Angles are only defined here for real vectors.');
     const uv = innerProduct(a, b, ctx);
     const nu = N.sqrt(innerProduct(a, a, ctx)), nv = N.sqrt(innerProduct(b, b, ctx));
     if (N.isZero(nu) || N.isZero(nv)) throw new MathError('Angle with the zero vector is undefined.');
@@ -737,14 +768,14 @@
     const b = colVec(asVec(args[args.length - 1], ctx));
     if (args.length === 3) {
       Q = asMatrix(args[0], ctx); Rm = asMatrix(args[1], ctx);
-      if (!M.equals(M.mul(M.transpose(Q), Q), M.identity(Q.c))) throw new MathError('Q must have orthonormal columns (QᵀQ = I).');
+      if (!M.equals(M.mul(M.ctranspose(Q), Q), M.identity(Q.c))) throw new MathError('Q must have orthonormal columns (QᵀQ = I).');
       if (!Rm.isSquare || Rm.a.some((row, i) => row.some((x, j) => i > j && !N.isZero(x)))) throw new MathError('R must be square and upper-triangular.');
       A = M.mul(Q, Rm);
     } else {
       A = asMatrix(args[0], ctx);
       ({ Q, R: Rm } = qrFactor(A));
     }
-    const At = M.transpose(A), Qtb = M.mul(M.transpose(Q), b);
+    const At = M.ctranspose(A), Qtb = M.mul(M.ctranspose(Q), b);
     const N1 = M.hcat([M.mul(At, A), M.mul(At, b)]); N1.aug = 1;
     const N2 = M.hcat([Rm, Qtb]); N2.aug = 1;
     const R2 = M.rref(N2);
@@ -774,7 +805,7 @@
   }, 'scalar component of v in the direction of v1');
   def('isorthonormal orthonormal isorth', 'isorthonormal(Q) or isorthonormal(v1, …)', 1, 12, (args, ctx) => {
     const Q = colsArg(args, ctx);
-    const G = M.mul(M.transpose(Q), Q);
+    const G = M.mul(M.ctranspose(Q), Q);
     const on = M.equals(G, M.identity(Q.c));
     const og = G.a.every((r, i) => r.every((x, j) => i === j || N.isZero(x)));
     return new Info('Orthonormal?', [
@@ -786,11 +817,11 @@
   }, 'check QᵀQ = I');
   def('perp orthcomp', 'perp(X) or perp(v1, v2, …)', 1, 12, (args, ctx) => {
     const X = colsArg(args, ctx);
-    const basis = M.nullspace(M.transpose(X));
+    const basis = M.nullspace(M.ctranspose(X));
     const dimV = M.rank(X), n = X.r;
     const blocks = [
       { tex: `V = \\operatorname{Col}(X),\\ X = ${M.latex(X)},\\qquad V^{\\perp} = \\operatorname{Null}(X^{\\mathsf T})` },
-      { tex: `\\operatorname{rref}(X^{\\mathsf T}) = ${M.latex(M.rref(M.transpose(X)))}` },
+      { tex: `\\operatorname{rref}(X^{\\mathsf T}) = ${M.latex(M.rref(M.ctranspose(X)))}` },
       { tex: `V^{\\perp} = ${basis.length ? `\\operatorname{span}\\left\\{${basis.map((v) => M.latex(colVec(v))).join(',\\ ')}\\right\\}` : '\\{\\mathbf 0\\}'}` },
       { text: `dim V + dim V⊥ = ${dimV} + ${basis.length} = ${n}. Any basis with the same span is equally correct (Sage may print a different one).` },
     ];
@@ -907,6 +938,17 @@
     return new Info(which === 'gm' ? `Geometric multiplicity of λ = ${N.toText(lam)}` : `Algebraic multiplicity of λ = ${N.toText(lam)}`, blocks, {}, N.fromInt(which === 'gm' ? gm : am));
   }
 
+  // Over ℂ the course replaces every ᵀ by * (and ℝ by ℂ); rewrite a result card's wording accordingly.
+  function starify(info) {
+    if (!(info instanceof Info)) return info;
+    const fixText = (t) => t && t.replace(/ᵀ/g, '*').replace(/ℝ/g, 'ℂ');
+    const fixTex = (t) => t && t.replace(/\^\{\\mathsf T\}/g, '^{*}').replace(/\\mathbb\{R\}/g, '\\mathbb{C}');
+    info.title = fixText(info.title);
+    info.blocks = info.blocks.map((b) => ({ ...b, text: fixText(b.text), tex: fixTex(b.tex) }));
+    return info;
+  }
+  const hasComplex = (v) => (v instanceof Info ? hasComplex(v.value) : v instanceof Matrix ? !M.isRealM(v) : N.isC(v));
+
   // Several vector args → their matrix of columns; one arg → that matrix.
   function colsArg(args, ctx) {
     if (args.length === 1) {
@@ -926,7 +968,7 @@
     if (!pivots.length) return M.zeros(A.c, A.r);
     const C = M.fromCols(pivots.map((j) => A.col(j)));
     const F = new Matrix(Rr.a.slice(0, pivots.length));
-    const Ft = M.transpose(F), Ct = M.transpose(C);
+    const Ft = M.ctranspose(F), Ct = M.ctranspose(C);
     return M.mul(Ft, M.mul(M.inverse(M.mul(F, Ft)), M.mul(M.inverse(M.mul(Ct, C)), Ct)));
   }
   function pinvInfo(A) {
@@ -941,7 +983,7 @@
 
   function leastSquaresInfo(A, b, steps) {
     if (A.r !== b.r) throw new MathError(`A has ${A.r} rows but b has ${b.r} entries.`);
-    const At = M.transpose(A);
+    const At = M.ctranspose(A);
     const Ab = M.hcat([A, b]); Ab.aug = 1;
     const AtA = M.mul(At, A), Atb = M.mul(At, b);
     const NE = M.hcat([AtA, Atb]); NE.aug = 1;
@@ -975,7 +1017,7 @@
     if (n < deg + 1) throw new MathError(`A degree-${deg} fit needs at least ${deg + 1} points.`);
     const A = new Matrix(ts.map((t) => Array.from({ length: deg + 1 }, (_, k) => N.powInt(t, k))));
     const y = colVec(ys);
-    const At = M.transpose(A);
+    const At = M.ctranspose(A);
     const NE = M.hcat([M.mul(At, A), M.mul(At, y)]); NE.aug = 1;
     const xh = M.mul(pinv(A), y);
     const c = xh.col(0);
@@ -1022,13 +1064,14 @@
   function qrFactor(A, steps) {
     const W = M.gramSchmidt(A, steps);
     if (W.c < A.c) throw new MathError('A = QR needs linearly independent columns (Gram–Schmidt produced a zero vector).');
-    const Q = M.normalizeCols(W);
-    const Rm = M.mul(M.transpose(Q), A).map((x, i, j) => (i > j ? R.ZERO : x));
+    let Q;
+    try { Q = M.normalizeCols(W); } catch (e) { throw new MathError('For complex matrices, QR here needs every Gram–Schmidt vector to have a rational length. gs(A) still gives the orthogonal basis.'); }
+    const Rm = M.mul(M.ctranspose(Q), A).map((x, i, j) => (i > j ? R.ZERO : x));
     return { W, Q, R: Rm };
   }
   function qrInfo(A, steps) {
     const { W, Q, R: Rm } = qrFactor(A, steps);
-    const P = M.mul(Q, M.transpose(Q));
+    const P = M.mul(Q, M.ctranspose(Q));
     return new Info('A = QR factorization', [
       { text: 'Gram–Schmidt on the columns of A gives a mutually orthogonal basis of Col(A):' },
       { tex: `W = ${M.latex(W)}` },
@@ -1041,17 +1084,18 @@
   }
   function gsInfo(X, steps) {
     const W = M.gramSchmidt(X, steps);
-    const U = M.normalizeCols(W);
+    let U = null;
+    try { U = M.normalizeCols(W); } catch (e) { /* complex vector with an irrational length */ }
     const vecs = (Mx) => Array.from({ length: Mx.c }, (_, j) => M.latex(colVec(Mx.col(j)))).join(',\\ ');
     const blocks = [
       { tex: `V = \\operatorname{span}\\left\\{${vecs(X)}\\right\\}` },
       { text: `Mutually orthogonal basis of V (dimension ${W.c}):` },
       { tex: `\\left\\{${vecs(W)}\\right\\}` },
       { text: 'Orthonormal basis of V (divide each by its length):' },
-      { tex: `\\left\\{${vecs(U)}\\right\\}` },
+      { tex: U ? `\\left\\{${vecs(U)}\\right\\}` : `\\left\\{${Array.from({ length: W.c }, (_, j) => `\\tfrac{1}{${N.toLatex(N.sqrt(M.dotCols(W.col(j), W.col(j))))}}${M.latex(colVec(W.col(j)))}`).join(',\\ ')}\\right\\}` },
     ];
     if (W.c < X.c) blocks.push({ text: `${X.c - W.c} of the vectors were dependent on earlier ones and were dropped.` });
-    return new Info('Gram–Schmidt', blocks, { W, Q: U }, W);
+    return new Info('Gram–Schmidt', blocks, U ? { W, Q: U } : { W }, W);
   }
 
   function indepInfo(X) {
@@ -1085,7 +1129,7 @@
     const basis = M.colspace(X);
     if (!basis.length) return { P: M.zeros(X.r, X.r), B: null };
     const B = M.fromCols(basis);
-    const Bt = M.transpose(B);
+    const Bt = M.ctranspose(B);
     const G = M.mul(Bt, B), Gi = M.inverse(G);
     return { P: M.mul(B, M.mul(Gi, Bt)), B, G, Gi };
   }
@@ -1098,12 +1142,12 @@
     blocks.push({ tex: `X = ${M.latex(B)}\\quad(\\text{columns form a basis of } V,\\ \\dim V = ${k})` });
     if (k === 1) {
       const v = B.col(0);
-      blocks.push({ tex: `P_V = \\frac{v v^{\\mathsf T}}{v^{\\mathsf T} v} = \\frac{1}{${N.toLatex(G.a[0][0])}}${M.latex(M.mul(B, M.transpose(B)))}` });
+      blocks.push({ tex: `P_V = \\frac{v v^{\\mathsf T}}{v^{\\mathsf T} v} = \\frac{1}{${N.toLatex(G.a[0][0])}}${M.latex(M.mul(B, M.ctranspose(B)))}` });
     } else {
       blocks.push({ tex: `X^{\\mathsf T}X = ${M.latex(G)},\\qquad (X^{\\mathsf T}X)^{-1} = ${M.latex(Gi)}` });
     }
     blocks.push({ tex: `P_V = X(X^{\\mathsf T}X)^{-1}X^{\\mathsf T} = ${M.latex(P)}` });
-    const sq = M.equals(M.mul(P, P), P), sym = M.isSymmetric(P);
+    const sq = M.equals(M.mul(P, P), P), sym = M.isHermitian(P);
     blocks.push({ text: `Checks: P² = P ${sq ? '✓' : '✗'} · Pᵀ = P ${sym ? '✓' : '✗'} · rank(P) = dim V = ${k} · trace(P) = ${N.toText(M.trace(P))}` });
     const Q = M.sub(M.identity(n), P);
     blocks.push({ tex: `I - P_V = ${M.latex(Q)}\\quad\\text{projects onto } V^{\\perp}${label ? '' : ''}` });
@@ -1113,7 +1157,8 @@
 
   // The four fundamental subspaces, in the course's terms (pivot columns, pivot solutions), with projections.
   function fourSubspacesInfo(A) {
-    const At = M.transpose(A);
+    const At = M.ctranspose(A);
+    const real = M.isRealM(A);
     const vecs = (list) => (list.length ? `\\left\\{${list.map((v) => M.latex(colVec(v))).join(',\\ ')}\\right\\}` : '\\{\\mathbf 0\\}');
     const spaces = [
       { name: 'Col(A)', tex: '\\operatorname{Col}(A)', basis: M.colspace(A), how: 'pivot columns of A', dim: A.r, part: 'Pcol', alt: M.rowspace(At), altHow: 'nonzero rows of rref(Aᵀ)' },
@@ -1135,7 +1180,9 @@
       if (s.alt && s.alt.length) blocks.push({ tex: `\\text{another basis (${s.altHow}): }${vecs(s.alt)}` });
     }
     blocks.push({ text: 'Orthogonal complements: Col(Aᵀ) ⊥ Null(A) in ℝⁿ and Col(A) ⊥ Null(Aᵀ) in ℝᵐ, so P_Col(Aᵀ) + P_Null(A) = I and P_Col(A) + P_Null(Aᵀ) = I.' });
-    return new Info('The four fundamental subspaces', blocks, parts);
+    const info = new Info('The four fundamental subspaces', blocks, parts);
+    if (!real) info.blocks = info.blocks.map((b) => ({ ...b, text: b.text && b.text.replace(/ᵀ/g, '*').replace(/ℝ/g, 'ℂ'), tex: b.tex && b.tex.replace(/\^\{\\mathsf T\}/g, '^{*}') }));
+    return info;
   }
 
   // ---------- subspace relations ----------
@@ -1156,12 +1203,12 @@
       if (kind === 'col') { basis = M.colspace(A); n = A.r; label = `Col(${argText})`; }
       if (kind === 'row') { basis = M.rowspace(A); n = A.c; label = `Row(${argText})`; }
       if (kind === 'null') { basis = M.nullspace(A); n = A.c; label = `Null(${argText})`; }
-      if (kind === 'lnull') { basis = M.nullspace(M.transpose(A)); n = A.r; label = `Null(${argText}ᵀ)`; }
+      if (kind === 'lnull') { basis = M.nullspace(M.ctranspose(A)); n = A.r; label = `Null(${argText}ᵀ)`; }
     } else if (kind === 'span' || kind === 'perp') {
       const X = colsArg(inner.args.map((a) => evaluate(a, ctx)), ctx);
       n = X.r;
       if (kind === 'span') { basis = M.colspace(X); label = `Span(${argText})`; }
-      else { basis = M.nullspace(M.transpose(X)); label = `(${inner.args.length > 1 ? `Span(${argText})` : `Col(${argText})`})⊥`; }
+      else { basis = M.nullspace(M.ctranspose(X)); label = `(${inner.args.length > 1 ? `Span(${argText})` : `Col(${argText})`})⊥`; }
     } else {
       const v = evaluate(node, ctx);
       if (!forceSpace && !(v instanceof Matrix)) return null;
@@ -1169,12 +1216,19 @@
       basis = M.colspace(X); n = X.r;
       label = X.c === 1 ? `Span(${exprText(node)})` : `Col(${exprText(node)})`;
     }
-    return { basis: basis.length ? M.fromCols(basis) : null, dim: basis.length, n, label };
+    const B = basis.length ? M.fromCols(basis) : null;
+    if (B && !M.isRealM(B)) ctx._cplx = true;
+    return { basis: B, dim: basis.length, n, label };
   }
   const spanTex = (S) => (S.basis ? `\\operatorname{span}\\left\\{${Array.from({ length: S.basis.c }, (_, j) => M.latex(colVec(S.basis.col(j)))).join(',\\ ')}\\right\\}` : '\\{\\mathbf 0\\}');
   const labelTex = (l) => l.replace(/ᵀ/g, '^{\\mathsf T}').replace(/⊥/g, '^{\\perp}').replace(/^(Col|Row|Null|Span)/, '\\operatorname{$1}');
 
   function relationInfo(op, lnode, rnode, ctx, fromFn = false) {
+    ctx._cplx = false;
+    const r = relationCore(op, lnode, rnode, ctx, fromFn);
+    return ctx._cplx ? starify(r) : r;
+  }
+  function relationCore(op, lnode, rnode, ctx, fromFn) {
     const isSpaceNode = (nd) => { const x = nd.type === 'group' ? nd.a : nd; return x.type === 'call' && !!SPACE_FNS[x.name]; };
     // "=" between ordinary expressions: plain equality of values
     if (op === 'eq' && !fromFn && !isSpaceNode(lnode) && !isSpaceNode(rnode)) return valueEqInfo(lnode, rnode, ctx);
@@ -1190,7 +1244,7 @@
     const n = V.n;
     if (op === 'perp') {
       if (!V.basis || !W.basis) return new Info(title, [...head, { text: '✓ Yes — the zero subspace is orthogonal to every subspace.' }]);
-      const G = M.mul(M.transpose(V.basis), W.basis);
+      const G = M.mul(M.ctranspose(V.basis), W.basis);
       const blocks = [...head, { text: 'V ⊥ W exactly when every basis vector of V is orthogonal to every basis vector of W, i.e. XᵀY = 0 (X, Y = basis matrices):' },
         { tex: `X^{\\mathsf T}Y = ${M.latex(G, 0, { factor: false })}` }];
       const bad = [];
@@ -1285,7 +1339,7 @@
     });
     const sq = A.isSquare;
     const lines = [
-      `Size: ${A.r} × ${A.c}${sq ? ' (square)' : ''}${A.c === 1 ? ' — a column vector' : A.r === 1 ? ' — a row vector' : ''}`,
+      `${M.isRealM(A) ? 'Real' : 'Complex'} matrix, size: ${A.r} × ${A.c}${sq ? ' (square)' : ''}${A.c === 1 ? ' — a column vector' : A.r === 1 ? ' — a row vector' : ''}`,
       `${yes(all(z))} zero matrix`,
     ];
     if (sq) {
@@ -1295,6 +1349,8 @@
         `${yes(all((x, i, j) => i <= j || z(x)))} upper triangular`,
         `${yes(all((x, i, j) => i >= j || z(x)))} lower triangular`,
         `${yes(M.isSymmetric(A))} symmetric (Aᵀ = A)`,
+        ...(M.isRealM(A) ? [] : [`${yes(M.isHermitian(A))} Hermitian (A* = A)`]),
+        `${yes(M.isUnitary(A))} ${M.isRealM(A) ? 'orthogonal (AᵀA = I)' : 'unitary (A*A = I)'}`,
         `${yes(all((x, i, j) => N.eq(x, N.neg(A.a[j][i]))))} skew-symmetric (Aᵀ = −A)`,
       );
     }
@@ -1347,6 +1403,13 @@
     return `<svg class="vplot" viewBox="0 0 ${S} ${S}" width="${S}" height="${S}" role="img" aria-label="Vector plot"><defs>${defs}</defs>${g}<text x="${S - 4}" y="${Y(0) - 4}" font-size="10" fill="var(--muted)" text-anchor="end">${lim}</text>${arrows}</svg>`;
   }
 
+  for (const name of ['projmat', 'lsq', 'qrlsq', 'isorthonormal', 'perp', 'pinv', 'qr', 'gs', 'subspaces', 'gram', 'basis', 'isindep']) {
+    const f = FUNCS[name];
+    const orig = f.fn;
+    const wrapped = (args, ctx, node) => { const r = orig(args, ctx, node); return args.some(hasComplex) ? starify(r) : r; };
+    for (const [k, g] of Object.entries(FUNCS)) if (g === f) FUNCS[k] = { ...f, fn: wrapped };
+  }
+
   function solutionInfo(res, A, B, lsq = false) {
     const title = lsq ? 'Least-squares solution' : 'Solution of Ax = b';
     if (res.kind === 'none') {
@@ -1377,7 +1440,9 @@
     const allRational = e.other.length === 0;
     if (allRational) {
       const factors = e.exact.map(({ v, mult }) => {
-        const s = N.isZero(v) ? 't' : `(t ${N.sign(v) < 0 ? '+' : '-'} ${N.toLatex(N.abs(v))})`;
+        const av = N.abs(v);
+        const avt = N.isC(av) && !N.isZero(av.re) ? `(${N.toLatex(av)})` : N.toLatex(av);
+        const s = N.isZero(v) ? 't' : `(t ${N.sign(v) < 0 ? '+' : '-'} ${avt})`;
         return mult > 1 ? `${s}^{${mult}}` : s;
       });
       if (e.exact.length) blocks.push({ tex: `\\phantom{\\chi_A(t)} = ${factors.join('')}` });
@@ -1388,8 +1453,9 @@
     for (const { v, mult, basis } of e.exact) {
       geoTotal += basis.length;
       const vecs = basis.map((b) => M.latex(M.fromCols([b]))).join(',\\ ');
+      const LI = N.isOne(v) ? '' : N.isOne(N.neg(v)) ? '-' : N.isC(v) && !N.isZero(v.re) ? `(${N.toLatex(v)})` : N.toLatex(v);
       blocks.push({
-        tex: `\\lambda = ${N.toLatex(v)}:\\quad \\operatorname{am}_A(${N.toLatex(v)}) = ${mult},\\ \\operatorname{gm}_A(${N.toLatex(v)}) = ${basis.length},\\quad \\mathcal{E}_A(${N.toLatex(v)}) = \\operatorname{Null}(${N.toLatex(v)}I - A) = \\operatorname{span}\\left\\{${vecs}\\right\\}`,
+        tex: `\\lambda = ${N.toLatex(v)}:\\quad \\operatorname{am}_A(${N.toLatex(v)}) = ${mult},\\ \\operatorname{gm}_A(${N.toLatex(v)}) = ${basis.length},\\quad \\mathcal{E}_A(${N.toLatex(v)}) = \\operatorname{Null}(${LI}I - A) = \\operatorname{span}\\left\\{${vecs}\\right\\}`,
       });
       basis.forEach((b) => { Pcols.push(b); Dvals.push(v); });
     }
@@ -1407,16 +1473,21 @@
       blocks.push({ tex: `\\lambda = ${label}${z.tex ? `\\ (\\approx ${N.fmtFloat(z.re)})` : ''}:\\quad E \\approx \\operatorname{span}\\left\\{${vecs}\\right\\}` });
       (z.basis || []).forEach((b) => { Pcols.push(b); Dvals.push(z.re); });
     }
-    if (complex) blocks.push({ text: 'Complex eigenvalues ⇒ not diagonalizable over ℝ (no real eigenvector for those).' });
+    const exactComplex = e.exact.some(({ v }) => N.isC(v));
+    if (complex) blocks.push({ text: 'Some eigenvalues are non-real and not exact fractions, so they are shown approximately (no eigenvectors computed for those).' });
     else if (geoTotal === n) {
       const P = M.fromCols(Pcols), D = M.diag(Dvals);
-      blocks.push({ text: 'Diagonalizable: the eigenvectors form a basis, so A = PDP⁻¹ with' });
+      blocks.push({ text: exactComplex && M.isRealM(A)
+        ? 'Not diagonalizable over ℝ (some eigenvalues are non-real), but diagonalizable over ℂ: A = PDP⁻¹ with'
+        : 'Diagonalizable: the eigenvectors form a basis, so A = PDP⁻¹ with' });
       blocks.push({ tex: `P = ${M.latex(P)},\\quad D = ${M.latex(D)}` });
       parts.P = P; parts.D = D;
     } else {
       blocks.push({ text: `Not diagonalizable: the eigenspaces only give ${geoTotal} independent eigenvector${geoTotal === 1 ? '' : 's'} (need ${n}).` });
     }
-    if (M.isSymmetric(A)) blocks.push({ text: 'A is symmetric, so its eigenvalues are real and eigenvectors for distinct eigenvalues are orthogonal (spectral theorem).' });
+    if (M.isRealM(A) && M.isSymmetric(A)) blocks.push({ text: 'A is symmetric, so its eigenvalues are real and eigenvectors for distinct eigenvalues are orthogonal (spectral theorem).' });
+    else if (M.isHermitian(A)) blocks.push({ text: 'A is Hermitian (A* = A), so its eigenvalues are real and eigenvectors for distinct eigenvalues are orthogonal.' });
+    if (exactComplex && M.isRealM(A)) blocks.push({ text: 'A is real, so its non-real eigenvalues come in conjugate pairs λ, λ̄ — and conj of an eigenvector for λ is an eigenvector for λ̄.' });
     const tr = M.trace(A), dt = M.det(A);
     blocks.push({ tex: `\\textstyle\\sum \\lambda_i = \\operatorname{tr}A = ${N.toLatex(tr)},\\quad \\prod \\lambda_i = \\det A = ${N.toLatex(dt)}` });
     return new Info('Eigenvalues & eigenvectors', blocks, parts);
@@ -1430,6 +1501,7 @@
       case 'group': return `(${exprText(n.a)})`;
       case 'neg': return `-${exprText(n.a)}`;
       case 'T': return `${exprText(n.a)}ᵀ`;
+      case 'CT': return `${exprText(n.a)}*`;
       case 'pow': return `${exprText(n.a)}^${exprText(n.e)}`;
       case 'ip': return `⟨${exprText(n.a)}, ${exprText(n.b)}⟩`;
       case 'bin': return n.op === '*' ? (n.implicit ? `${exprText(n.l)}${exprText(n.r)}` : `${exprText(n.l)}·${exprText(n.r)}`) : `${exprText(n.l)} ${n.op} ${exprText(n.r)}`;

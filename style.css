@@ -247,7 +247,7 @@ main { padding: 16px 22px 60px; min-width: 0; }
 .card.error .card-body { color: var(--bad); font-size: 14px; }
 .info-title { font-weight: 600; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
 .info-block { margin: 6px 0; }
-.card-body .katex-display { overflow-x: auto; overflow-y: visible; padding: 4px 0; }
+.card-body .katex-display { overflow-x: auto; overflow-y: hidden; padding: 0.5em 0.15em; }
 .info-block .lbl { font-family: var(--mono); color: var(--muted); font-size: 12px; }
 .info-text { font-size: 14px; }
 .parts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }

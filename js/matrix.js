@@ -39,6 +39,9 @@
   }
 
   function transpose(A) { return new Matrix(A.a[0].map((_, j) => A.a.map((row) => row[j]))); }
+  // Conjugate transpose A* (= Aᵀ for real matrices)
+  function ctranspose(A) { return new Matrix(A.a[0].map((_, j) => A.a.map((row) => N.conj(row[j])))); }
+  const isRealM = (A) => !A.a.some((r) => r.some(N.isC));
 
   function sameDims(A, B, what) {
     if (A.r !== B.r || A.c !== B.c) throw new MathError(`Can't ${what} a ${A.dims} and a ${B.dims} matrix: dimensions must match.`);
@@ -96,6 +99,8 @@
     return s;
   }
   function isSymmetric(A) { return A.isSquare && equals(A, transpose(A)); }
+  function isHermitian(A) { return A.isSquare && equals(A, ctranspose(A)); }
+  function isUnitary(A) { return A.isSquare && equals(mul(ctranspose(A), A), identity(A.r)); }
 
   // ---------- LaTeX ----------
   // aug: number of trailing columns after a bar, or an array of block widths (e.g. [3, 3, 3] for [U|L|P])
@@ -142,6 +147,7 @@
     // coefficient in front of a row: "3", "\frac12", "(-2)" ... returns '' for 1
     if (N.isOne(f)) return '';
     const s = N.toLatex(f);
+    if (N.isC(f) && !N.isZero(f.re)) return `\\left(${s}\\right)`;
     return s.startsWith('-') ? `\\left(${s}\\right)` : s;
   }
   // Row-operation notation used in Math 218: r2 - 3r1 -> r2, r1 <-> r2, (1/2) r1 -> r1
@@ -382,8 +388,9 @@
       const m = N.abs(a);
       let term;
       const vk = k === 0 ? '' : k === 1 ? v : `${v}^{${k}}`;
-      if (k === 0) term = N.toLatex(m);
-      else term = (N.isOne(m) ? '' : N.toLatex(m)) + vk;
+      const mt = N.isC(m) && !N.isZero(m.re) ? `(${N.toLatex(m)})` : N.toLatex(m);
+      if (k === 0) term = mt;
+      else term = (N.isOne(m) ? '' : mt) + vk;
       if (!s) s = (neg ? '-' : '') + term;
       else s += (neg ? ' - ' : ' + ') + term;
     }
@@ -433,12 +440,13 @@
   function numericRoots(c) {
     const n = c.length - 1;
     if (n < 1) return [];
-    const a = c.map(N.toF);
-    const lead = a[n];
-    const p = a.map((x) => x / lead);
+    // coefficients may be complex: work with [re, im] float pairs
+    const a = c.map((x) => (N.isC(x) ? [N.toF(x.re), N.toF(x.im)] : [N.toF(x), 0]));
+    const [lr, li] = a[n], ld = lr * lr + li * li;
+    const p = a.map(([xr, xi]) => [(xr * lr + xi * li) / ld, (xi * lr - xr * li) / ld]);
     const evalC = (re, im) => {
       let sr = 0, si = 0;
-      for (let k = n; k >= 0; k--) { const t = sr * re - si * im + p[k]; si = sr * im + si * re; sr = t; }
+      for (let k = n; k >= 0; k--) { const t = sr * re - si * im + p[k][0]; si = sr * im + si * re + p[k][1]; sr = t; }
       return [sr, si];
     };
     let z = Array.from({ length: n }, (_, k) => { const ang = (2 * Math.PI * k) / n + 0.4; return [Math.cos(ang) * 1.3, Math.sin(ang) * 1.3]; });
@@ -458,11 +466,38 @@
     return z.map(([re, im]) => ({ re: Math.abs(re) < 1e-12 ? 0 : re, im: Math.abs(im) < 1e-9 ? 0 : im }));
   }
 
+  // Roots that are exact (Gaussian) rationals: find them numerically, round to a nearby simple
+  // fraction a/q + (b/q)i, and keep them only if the polynomial vanishes there *exactly*.
+  function snapRational(x) {
+    for (let q = 1; q <= 60; q++) {
+      const k = Math.round(x * q);
+      if (Math.abs(x - k / q) < 1e-6 * Math.max(1, Math.abs(x))) return new R(BigInt(k), BigInt(q));
+    }
+    return null;
+  }
+  function exactRoots(coeffs) {
+    let c = coeffs.slice();
+    const roots = [];
+    const push = (v) => { const f = roots.find((r) => N.eq(r.v, v)); if (f) f.mult++; else roots.push({ v, mult: 1 }); };
+    if (!c.every(N.isExact)) return { roots, rest: c };
+    for (let guard = 0; guard < 40 && c.length > 1; guard++) {
+      let found = false;
+      for (const z of numericRoots(c)) {
+        const re = snapRational(z.re), im = snapRational(z.im);
+        if (!re || !im) continue;
+        const v = N.mkC(re, im);
+        if (N.isZero(evalPoly(c, v))) { push(v); c = deflate(c, v); found = true; break; }
+      }
+      if (!found) break;
+    }
+    return { roots, rest: c };
+  }
+
   // Scale an exact vector by the LCM of its denominators (nicer eigenvectors)
   function clearDenoms(v) {
-    if (!v.every(N.isR)) return v;
+    if (!v.every((x) => N.isR(x) || N.isC(x))) return v;
     let L = 1n;
-    for (const x of v) L = (L * x.d) / N.bgcd(L, x.d);
+    for (const x of v.flatMap((y) => (N.isC(y) ? [y.re, y.im] : [y]))) L = (L * x.d) / N.bgcd(L, x.d);
     return L === 1n ? v : v.map((x) => N.mul(x, new R(L)));
   }
 
@@ -471,8 +506,14 @@
     needSquare(A, 'Eigenvalues');
     const n = A.r;
     const c = charpoly(A);
-    const { roots, rest } = rationalRoots(c);
+    const rr = rationalRoots(c);
+    // remaining exact roots, including non-real ones like ±i (and roots of complex matrices)
+    const er = exactRoots(rr.rest);
+    const roots = rr.roots.slice();
+    for (const r of er.roots) { const f = roots.find((x) => N.eq(x.v, r.v)); if (f) f.mult += r.mult; else roots.push(r); }
+    const rest = er.rest;
     const res = { charpoly: c, exact: [], other: [] };
+    const realA = isRealM(A);
     for (const { v, mult } of roots) {
       const B = sub(A, scale(v, identity(n)));
       const basis = nullspace(B).map(clearDenoms);
@@ -500,7 +541,7 @@
       }
     } else if (deg >= 1) {
       for (const z of numericRoots(rest)) {
-        const basis = z.im === 0 ? nullspace(sub(A, scale(z.re, identity(n))), 1e-6) : null;
+        const basis = z.im === 0 && realA ? nullspace(sub(A, scale(z.re, identity(n))), 1e-6) : null;
         res.other.push({ ...z, basis });
       }
     }
@@ -552,9 +593,10 @@
     return { P: new Matrix(P), L: Lf, U: new Matrix(U), swapped };
   }
 
+  // ⟨u, v⟩ = u* v = Σ conj(uᵢ) vᵢ  (conjugate-linear in the first argument, like the course)
   function dotCols(u, v) {
     let s = R.ZERO;
-    for (let i = 0; i < u.length; i++) s = N.add(s, N.mul(u[i], v[i]));
+    for (let i = 0; i < u.length; i++) s = N.add(s, N.mul(N.conj(u[i]), v[i]));
     return s;
   }
   // Gram–Schmidt on the columns of A. Returns orthogonal (unnormalized) columns, skipping dependent ones.
@@ -565,7 +607,7 @@
       const pieces = [];
       for (let k = 0; k < out.length; k++) {
         const u = out[k];
-        const coef = N.div(dotCols(v, u), dotCols(u, u));
+        const coef = N.div(dotCols(u, v), dotCols(u, u)); // proj_u(v) = (⟨u, v⟩ / ⟨u, u⟩) u
         if (!N.isZero(coef)) pieces.push(`${N.sign(coef) < 0 ? '+' : '-'} ${coefLatex(N.abs(coef))}u_{${k + 1}}`);
         v = v.map((x, i) => N.sub(x, N.mul(coef, u[i])));
       }
@@ -597,7 +639,7 @@
 
   LA.Matrix = Matrix;
   LA.mat = {
-    Matrix, fromCols, identity, zeros, fill, random, diag, transpose, add, sub, scale, mul, pow, equals,
+    Matrix, fromCols, identity, zeros, fill, random, diag, transpose, ctranspose, isRealM, isHermitian, isUnitary, add, sub, scale, mul, pow, equals,
     hcat, vcat, trace, isSymmetric, latex, eliminate, rref, ref, rank, det, inverse, minorMatrix,
     cofactorMatrix, adjugate, nullspace, colspace, rowspace, solve, charpoly, polyLatex, eigen, lu,
     commonFactor, setFactorFractions, gramSchmidt, normalizeCols, cross, dotCols, isExactM, coefLatex, elimFactor, opLatex, evalPoly, deflate,
