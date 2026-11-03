@@ -13,7 +13,10 @@ RUN cd /usr/share/nginx/html \
  && v=$(cat style.css js/*.js | md5sum | cut -c1-10) \
  && sed -i -E "s#(src=\"js/[a-z]+\.js|href=\"style\.css)\"#\1?v=$v\"#g" index.html \
  && grep -q "style.css?v=$v" index.html \
- && test "$(grep -c "\.js?v=$v" index.html)" -eq "$(ls js/*.js | wc -l)"
+ && test "$(grep -c "\.js?v=$v" index.html)" -eq "$(ls js/*.js | wc -l)" \
+ && sed -i "s/__ASSET_VERSION__/$v/" /etc/nginx/conf.d/default.conf \
+ && grep -q "\^($v)" /etc/nginx/conf.d/default.conf \
+ && nginx -t
 
 EXPOSE 80
 
